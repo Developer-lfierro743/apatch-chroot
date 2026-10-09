@@ -57,6 +57,12 @@ def run_container(args, conn):
     master_fd, slave_fd = pty.openpty()
     _set_winsize(master_fd)
 
+    # A private mount namespace (unshared in the child, per session) keeps
+    # every mount we make off the host, so Android's /dev/snd (audio) and the
+    # rest of /dev keep working normally while the container runs. The daemon
+    # itself is never unshared — only the session child.
+    use_mount_ns = args.get("mounts", True)
+
     pid = os.fork()
     if pid == 0:
         try:
@@ -69,6 +75,17 @@ def run_container(args, conn):
             os.dup2(slave_fd, 2)
             if slave_fd > 2:
                 os.close(slave_fd)
+            # Unshare a private mount namespace, then mount the pseudo-fs set,
+            # all before chroot. If the kernel refuses CLONE_NEWNS we still
+            # chroot (mounts just won't be isolated — the documented fallback).
+            # No teardown needed: the namespace dies with this child on exit.
+            if use_mount_ns:
+                try:
+                    import mounts as mounts_mod
+                    mounts_mod.enter_private_mount_ns()
+                    mounts_mod.setup_mounts(rootfs)
+                except OSError:
+                    pass
             os.chroot(rootfs)
             os.chdir(cwd)
             os.execvp(command[0], command)
