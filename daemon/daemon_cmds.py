@@ -243,3 +243,144 @@ def remove_container(args):
         return {"ok": False, "error": f"container '{name}' is not installed"}
     shutil.rmtree(target, ignore_errors=True)
     return {"ok": True, "data": {"removed": name}}
+
+
+# ---------------------------------------------------------------------------
+# convert: import a chroot-distro container (copy its rootfs, keep metadata)
+# ---------------------------------------------------------------------------
+
+# Where chroot-distro keeps its containers (Termux prefix, standard layout).
+CHROOT_DISTRO_DIR = "/data/data/com.termux/files/usr/var/lib/chroot-distro/containers"
+
+
+def convert_from_chroot_distro(args, conn):
+    """Copy a chroot-distro container's rootfs into apatch-chroot.
+
+    args: {"name": "ubuntu", "as_name": optional}
+
+    The chroot-distro rootfs is already a plain extracted tree, so conversion
+    is a recursive copy plus reading its manifest.json for the source image
+    ref and arch. No layer re-processing. The chroot-distro container must be
+    unmounted first (its ghost mounts would otherwise be copied as empty
+    dirs); we refuse if any mount still sits under its rootfs.
+    """
+    import json
+
+    name = args.get("name")
+    if not name:
+        return {"ok": False, "error": "convert requires a source container name"}
+    as_name = args.get("as_name") or name
+
+    src_dir = os.path.join(CHROOT_DISTRO_DIR, name)
+    src_rootfs = os.path.join(src_dir, "rootfs")
+    if not os.path.isdir(src_rootfs):
+        return {"ok": False, "error": f"chroot-distro container '{name}' not found at {src_rootfs}"}
+
+    def progress(phase, detail=""):
+        conn.sendall(b"\x02" + json.dumps({"phase": phase, "detail": detail}).encode() + b"\n")
+
+    # Refuse if the source is still mounted (ghost mounts would copy as empty).
+    busy = _mounts_under(src_rootfs)
+    if busy:
+        return {
+            "ok": False,
+            "error": (
+                f"chroot-distro '{name}' still has {len(busy)} mount(s) under its rootfs. "
+                "Run 'chroot-distro kill " + name + "' (or reboot) first, then convert."
+            ),
+        }
+
+    # Read the source image ref + arch from chroot-distro's manifest.
+    image_ref, arch = "", ""
+    manifest_path = os.path.join(src_dir, "manifest.json")
+    with contextlib.suppress(OSError, ValueError):
+        with open(manifest_path) as f:
+            m = json.load(f)
+        image_ref = m.get("image_ref", "") or ""
+        arch = m.get("arch", "") or ""
+
+    dest_dir = os.path.join(CONTAINERS_DIR, as_name)
+    dest_rootfs = os.path.join(dest_dir, "rootfs")
+    if os.path.exists(dest_rootfs):
+        return {"ok": False, "error": f"apatch-chroot container '{as_name}' already exists; remove it first"}
+    os.makedirs(dest_rootfs, exist_ok=True)
+
+    progress("copy", f"{name} -> {as_name}")
+    copied = _copy_tree(src_rootfs, dest_rootfs, progress)
+
+    if image_ref:
+        with contextlib.suppress(OSError):
+            with open(os.path.join(dest_dir, "image"), "w") as f:
+                f.write(image_ref)
+    if arch:
+        with contextlib.suppress(OSError):
+            with open(os.path.join(dest_dir, "arch"), "w") as f:
+                f.write(arch)
+
+    progress("done", f"{copied} entries")
+    conn.sendall(
+        b"\x02" + json.dumps({"ok": True, "data": {"converted": as_name, "entries": copied, "image": image_ref}}).encode() + b"\n"
+    )
+    return None
+
+
+def _mounts_under(path):
+    """Return mount points under *path* from /proc/mounts (best-effort)."""
+    path = os.path.realpath(path)
+    out = []
+    with contextlib.suppress(OSError):
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and (parts[1] == path or parts[1].startswith(path + os.sep)):
+                    out.append(parts[1])
+    return out
+
+
+def _copy_tree(src, dst, progress):
+    """Recursively copy src -> dst, dereferencing nothing (symlinks kept as-is).
+
+    Returns the number of filesystem entries copied. Symlinks are recreated
+    verbatim (not followed), so the guest's own links (e.g. /bin/sh ->
+    /bin/busybox) survive exactly as the layer extractor keeps them.
+    """
+    def _unlink(path):
+        if os.path.islink(path) or os.path.isfile(path):
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        elif os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+
+    count = 0
+    for root, dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        dest_dir = dst if rel == "." else os.path.join(dst, rel)
+        os.makedirs(dest_dir, exist_ok=True)
+        # Copy symlinked directories as symlinks, don't descend into host paths.
+        keep = []
+        for d in dirs:
+            sp = os.path.join(root, d)
+            dp = os.path.join(dest_dir, d)
+            if os.path.islink(sp):
+                with contextlib.suppress(OSError):
+                    _unlink(dp)
+                    os.symlink(os.readlink(sp), dp)
+            else:
+                keep.append(d)
+                count += 1
+        dirs[:] = keep
+        for fn in files:
+            sp = os.path.join(root, fn)
+            dp = os.path.join(dest_dir, fn)
+            try:
+                if os.path.islink(sp):
+                    _unlink(dp)
+                    os.symlink(os.readlink(sp), dp)
+                else:
+                    shutil.copy2(sp, dp, follow_symlinks=False)
+                count += 1
+            except OSError:
+                continue
+        if count and count % 2000 == 0:
+            progress("copy", f"{count} entries")
+    return count

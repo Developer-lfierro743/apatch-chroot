@@ -18,6 +18,7 @@ CANONICAL_PROGRAM_NAME = "APatch Chroot"
 
 TOP_COMMANDS = (
     ("install", "Pull an image from a registry and install it as a container."),
+    ("convert", "Import an existing chroot-distro container."),
     ("run", "Run a command in a container (non-interactive or one-shot)."),
     ("login", "Open an interactive shell inside a container."),
     ("list", "List installed containers."),
@@ -27,6 +28,25 @@ TOP_COMMANDS = (
 )
 
 HELP_PAGES = {
+    "convert": {
+        "usage": "convert NAME [AS_NAME]",
+        "summary": (
+            "Import an existing chroot-distro container into apatch-chroot.\n\n"
+            "NAME is the container as chroot-distro knows it; AS_NAME (optional) "
+            "renames it on import. The rootfs is copied as-is and the source "
+            "image reference is preserved, so 'list' still shows where it came "
+            "from.\n\n"
+            "The chroot-distro container must be unmounted first — run "
+            "'chroot-distro kill NAME' (or reboot) — or the copy is refused, "
+            "since stale mounts under the rootfs would be copied as empty "
+            "directories."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": [
+            "chroot-distro kill ubuntu && apatch-chroot convert ubuntu",
+            "apatch-chroot convert ubuntu my-ubuntu",
+        ],
+    },
     "install": {
         "usage": "install [OPTIONS] IMAGE [AS_NAME]",
         "summary": (

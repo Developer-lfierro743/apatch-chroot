@@ -58,6 +58,9 @@ def handle_request(req, conn):
     if cmd == "remove":
         from daemon_cmds import remove_container
         return remove_container(req.get("args", {}))
+    if cmd == "convert":
+        from daemon_cmds import convert_from_chroot_distro
+        return convert_from_chroot_distro(req.get("args", {}), conn)
     if cmd == "shutdown":
         return {"ok": True, "data": {"bye": True}, "_shutdown": True}
     return {"ok": False, "error": f"unknown cmd: {cmd}"}

@@ -156,6 +156,26 @@ def cmd_remove(name):
     return 1
 
 
+def cmd_convert(name, as_name):
+    s = connect()
+    args = {"name": name}
+    if as_name:
+        args["as_name"] = as_name
+    request(s, {"cmd": "convert", "args": args})
+
+    def on_progress(phase, detail):
+        print(f"  [{phase}] {detail}", file=sys.stderr)
+
+    ok, data = _stream_controls(s, on_progress)
+    s.close()
+    if ok:
+        src = f" (from {data['image']})" if data.get("image") else ""
+        print(f"converted '{data['converted']}'{src} — {data['entries']} entries")
+        return 0
+    print(f"error: {data['error']}", file=sys.stderr)
+    return 1
+
+
 def cmd_run(name, command):
     s = connect()
     request(s, {"cmd": "run", "args": {"name": name, "command": command}})
@@ -253,6 +273,11 @@ def main(argv):
             print("usage: apatch-chroot remove NAME", file=sys.stderr)
             return 2
         return cmd_remove(args[1])
+    if cmd == "convert":
+        if len(args) < 2:
+            print("usage: apatch-chroot convert NAME [AS_NAME]", file=sys.stderr)
+            return 2
+        return cmd_convert(args[1], args[2] if len(args) > 2 else None)
     if cmd == "run":
         if len(args) < 2:
             print("usage: apatch-chroot run <name> [-- CMD...]", file=sys.stderr)
