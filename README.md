@@ -102,9 +102,10 @@ Newline-delimited JSON requests over the unix socket `/dev/apatch-chroot.sock`. 
 
 - [x] Privileged daemon + socket + chroot + PTY (the seccomp bypass)
 - [x] Help system
-- [ ] `install` — Docker Hub OCI pull (manifest → layers → extract)
+- [x] `install` — Docker Hub OCI pull (manifest → layers → extract)
+- [x] `list`, `remove`
 - [ ] Mount orchestration (`/dev`, `/proc`, `/sys`, devpts)
-- [ ] `list`, `kill`, `remove`, `info`
+- [ ] `kill` (stop + unmount sweep)
 - [ ] `login` as non-root users
 - [ ] Multi-arch images via binfmt
 
