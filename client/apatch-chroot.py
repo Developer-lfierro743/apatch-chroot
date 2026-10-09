@@ -176,6 +176,25 @@ def cmd_convert(name, as_name):
     return 1
 
 
+def cmd_kill(name):
+    s = connect()
+    request(s, {"cmd": "kill", "args": {"name": name}})
+    resp = read_control_line(s)
+    s.close()
+    if resp and resp.get("ok"):
+        killed = resp["data"].get("killed", [])
+        note = resp["data"].get("note")
+        if killed:
+            print(f"stopped sessions of '{name}': pids {killed}")
+        elif note:
+            print(note)
+        else:
+            print(f"no running sessions of '{name}'")
+        return 0
+    print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+    return 1
+
+
 def cmd_run(name, command):
     s = connect()
     request(s, {"cmd": "run", "args": {"name": name, "command": command}})
@@ -278,6 +297,11 @@ def main(argv):
             print("usage: apatch-chroot convert NAME [AS_NAME]", file=sys.stderr)
             return 2
         return cmd_convert(args[1], args[2] if len(args) > 2 else None)
+    if cmd == "kill":
+        if len(args) < 2:
+            print("usage: apatch-chroot kill NAME", file=sys.stderr)
+            return 2
+        return cmd_kill(args[1])
     if cmd == "run":
         if len(args) < 2:
             print("usage: apatch-chroot run <name> [-- CMD...]", file=sys.stderr)

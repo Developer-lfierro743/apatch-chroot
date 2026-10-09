@@ -20,10 +20,33 @@ import termios
 MAX = 65536
 CONTAINERS_DIR = "/data/apatch-chroot/containers"
 
+# Live session children: name -> list of (pid). The daemon forks one child per
+# `run`/`login` session; `kill` signals these. Entries are removed when the
+# child is reaped in run_container's wait loop.
+_SESSIONS: dict[str, list[int]] = {}
+
 
 def _set_winsize(fd, rows=24, cols=80):
     with contextlib.suppress(OSError):
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+
+# A sane guest environment. execvp would inherit the host Termux PATH, so the
+# guest's own coreutils (/bin/ls, /usr/bin/id) would not be found — this gives
+# the standard Linux PATH plus TERM/HOME so both login shells and bare `run`
+# commands behave. A login shell overrides these by sourcing /etc/profile.
+_GUEST_ENV = {
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "HOME": "/root",
+    "TERM": "xterm-256color",
+    "USER": "root",
+    "SHELL": "/bin/bash",
+}
+
+
+def _guest_env():
+    """Return the environment dict for the chrooted exec (a copy of _GUEST_ENV)."""
+    return dict(_GUEST_ENV)
 
 
 def run_container(args, conn):
@@ -88,13 +111,14 @@ def run_container(args, conn):
                     pass
             os.chroot(rootfs)
             os.chdir(cwd)
-            os.execvp(command[0], command)
+            os.execvpe(command[0], command, _guest_env())
         except Exception as e:
             with contextlib.suppress(OSError):
                 os.write(2, f"exec failed: {e}\n".encode())
             os._exit(127)
 
     os.close(slave_fd)
+    _SESSIONS.setdefault(name, []).append(pid)
     send_control({"ok": True, "data": {"pid": pid}})
 
     conn.setblocking(False)
@@ -124,6 +148,7 @@ def run_container(args, conn):
             # Reap if the child already exited and the pty drained.
             wpid, status = os.waitpid(pid, os.WNOHANG)
             if wpid == pid:
+                _unregister_session(name, pid)
                 # Drain remaining output.
                 with contextlib.suppress(OSError):
                     while True:
@@ -138,7 +163,60 @@ def run_container(args, conn):
             os.close(master_fd)
         with contextlib.suppress(ChildProcessError):
             os.waitpid(pid, os.WNOHANG)
+        _unregister_session(name, pid)
     return None
+
+
+def _unregister_session(name, pid):
+    """Drop *pid* from the live-session registry for *name*."""
+    pids = _SESSIONS.get(name)
+    if pids and pid in pids:
+        pids.remove(pid)
+    if name in _SESSIONS and not _SESSIONS[name]:
+        _SESSIONS.pop(name, None)
+
+
+def kill_container(args):
+    """Stop a container's running sessions: SIGTERM, grace, then SIGKILL.
+
+    args: {"name"}. Returns the pids that were signalled. The session's
+    run_container loop reaps the child and tears down its private mount
+    namespace on exit, so killing the pid is enough — nothing to unmount.
+    """
+    import signal
+    import time
+
+    name = args.get("name")
+    if not name:
+        return {"ok": False, "error": "kill requires a name"}
+    pids = list(_SESSIONS.get(name, []))
+    if not pids:
+        return {"ok": True, "data": {"killed": [], "note": "no running sessions"}}
+
+    for pid in pids:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+
+    # Grace period, then SIGKILL whatever survived.
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        if not any(_pid_alive(p) for p in pids):
+            break
+        time.sleep(0.1)
+    for pid in pids:
+        if _pid_alive(pid):
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+
+    return {"ok": True, "data": {"killed": pids}}
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
