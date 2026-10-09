@@ -100,7 +100,10 @@ def main():
         pass
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCKET_PATH)
-    os.chmod(SOCKET_PATH, 0o600)
+    # The client runs as the Termux app (untrusted_app), not root, so the
+    # socket must be connectable by it. On a single-user phone the socket is
+    # the trust boundary; 0666 lets the app reach the root daemon.
+    os.chmod(SOCKET_PATH, 0o666)
     srv.listen(8)
     print(f"apatch-chroot daemon listening on {SOCKET_PATH} (uid={os.getuid()})", flush=True)
     while True:
