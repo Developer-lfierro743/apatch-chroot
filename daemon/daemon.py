@@ -49,6 +49,15 @@ def handle_request(req, conn):
         from daemon_cmds import run_container
         req["args"]["_conn"] = conn
         return run_container(req.get("args", {}), conn)
+    if cmd == "install":
+        from daemon_cmds import install_container
+        return install_container(req.get("args", {}), conn)
+    if cmd == "list":
+        from daemon_cmds import list_containers
+        return list_containers(req.get("args", {}))
+    if cmd == "remove":
+        from daemon_cmds import remove_container
+        return remove_container(req.get("args", {}))
     if cmd == "shutdown":
         return {"ok": True, "data": {"bye": True}, "_shutdown": True}
     return {"ok": False, "error": f"unknown cmd: {cmd}"}

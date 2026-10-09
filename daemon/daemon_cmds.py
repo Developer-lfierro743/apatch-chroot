@@ -4,8 +4,8 @@ Runs in the daemon's root context, outside Android's app seccomp filter, so
 mount(2)/umount2(2)/chroot(2)/openpty succeed here where they SIGSYS in the
 Termux app process.
 
-Milestone 1: bare chroot + PTY, I/O proxied over the socket. Proves the
-privileged context works. Mount orchestration and OCI pull come next.
+Commands: run (chroot + PTY), install (OCI pull + layer extract), list, kill,
+remove. Milestone 1 (chroot + PTY) and install are both proven.
 """
 
 import contextlib
@@ -13,10 +13,12 @@ import fcntl
 import os
 import pty
 import select
+import shutil
 import struct
 import termios
 
 MAX = 65536
+CONTAINERS_DIR = "/data/apatch-chroot/containers"
 
 
 def _set_winsize(fd, rows=24, cols=80):
@@ -120,3 +122,124 @@ def run_container(args, conn):
         with contextlib.suppress(ChildProcessError):
             os.waitpid(pid, os.WNOHANG)
     return None
+
+
+# ---------------------------------------------------------------------------
+# install: OCI pull + layer extract
+# ---------------------------------------------------------------------------
+
+def install_container(args, conn):
+    """Pull an image and extract it into containers/<name>/rootfs.
+
+    args: {"image": "ubuntu:24.04", "name": "ubuntu" (optional), "arch": optional}
+    Streams progress as control frames; final frame carries {"ok", "installed"}.
+    """
+    import json
+    import tempfile
+
+    import arch as archmod
+    import layer_extract
+    import registry
+
+    image = args.get("image")
+    if not image:
+        return {"ok": False, "error": "install requires an image reference"}
+
+    name = args.get("name") or registry.derive_alias(image)
+
+    def progress(phase, detail=""):
+        payload = json.dumps({"phase": phase, "detail": detail}).encode()
+        conn.sendall(b"\x02" + payload + b"\n")
+
+    try:
+        reg, repo, tag = registry.parse_image_ref(image)
+        progress("auth", f"{repo}:{tag}")
+        token = registry.get_token(reg, repo)
+
+        progress("manifest", f"{repo}:{tag}")
+        manifest, ct = registry.get_manifest(reg, repo, tag, token)
+
+        if registry.is_index(ct):
+            arch, variant = archmod.host_platform()
+            entry = registry.pick_platform(manifest, arch, variant, image)
+            digest = entry["digest"]
+            progress("manifest", f"{arch} -> {digest[:19]}")
+            manifest, ct = registry.get_manifest(reg, repo, digest, token)
+
+        layers = manifest.get("layers", [])
+        if not layers:
+            return {"ok": False, "error": f"{image} has no filesystem layers"}
+
+        rootfs = os.path.join(CONTAINERS_DIR, name, "rootfs")
+        os.makedirs(rootfs, exist_ok=True)
+
+        tmpdir = tempfile.mkdtemp(prefix="apatch-chroot-layer-")
+        try:
+            for i, layer in enumerate(layers, 1):
+                digest = layer["digest"]
+                size = layer.get("size", 0)
+                progress("layer", f"{i}/{len(layers)} {digest[:19]} ({size} bytes)")
+                blob_path = os.path.join(tmpdir, digest.replace(":", "_"))
+                registry.get_blob(reg, repo, digest, token, blob_path)
+                n = layer_extract.apply_layer(blob_path, rootfs)
+                progress("extract", f"layer {i}/{len(layers)}: {n} entries")
+                with contextlib.suppress(OSError):
+                    os.unlink(blob_path)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        # Record the source image for `list`.
+        meta = os.path.join(CONTAINERS_DIR, name, "image")
+        with contextlib.suppress(OSError):
+            with open(meta, "w") as f:
+                f.write(image)
+
+        progress("done", name)
+        conn.sendall(b"\x02" + json.dumps({"ok": True, "data": {"installed": name, "rootfs": rootfs}}).encode() + b"\n")
+        return None
+    except registry.RegistryError as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"install failed: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# list / remove
+# ---------------------------------------------------------------------------
+
+def list_containers(args):
+    out = []
+    if not os.path.isdir(CONTAINERS_DIR):
+        return {"ok": True, "data": {"containers": []}}
+    for name in sorted(os.listdir(CONTAINERS_DIR)):
+        rootfs = os.path.join(CONTAINERS_DIR, name, "rootfs")
+        if not os.path.isdir(rootfs):
+            continue
+        image = ""
+        meta = os.path.join(CONTAINERS_DIR, name, "image")
+        with contextlib.suppress(OSError):
+            with open(meta) as f:
+                image = f.read().strip()
+        size = _du(rootfs)
+        out.append({"name": name, "image": image, "size_bytes": size})
+    return {"ok": True, "data": {"containers": out}}
+
+
+def _du(path):
+    total = 0
+    for root, dirs, files in os.walk(path):
+        for f in files:
+            with contextlib.suppress(OSError):
+                total += os.path.getsize(os.path.join(root, f))
+    return total
+
+
+def remove_container(args):
+    name = args.get("name")
+    if not name:
+        return {"ok": False, "error": "remove requires a name"}
+    target = os.path.join(CONTAINERS_DIR, name)
+    if not os.path.isdir(target):
+        return {"ok": False, "error": f"container '{name}' is not installed"}
+    shutil.rmtree(target, ignore_errors=True)
+    return {"ok": True, "data": {"removed": name}}

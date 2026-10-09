@@ -79,6 +79,83 @@ def cmd_ping():
     return 1
 
 
+def _stream_controls(s, on_progress):
+    """Read framed control messages until a final ok/error one. Returns (ok, data)."""
+    while True:
+        hdr = _read_exact(s, 1)
+        if hdr is None:
+            return False, {"error": "connection closed"}
+        if hdr == b"\x01":  # stray data frame in a control context; discard
+            lenb = _read_exact(s, 4)
+            if lenb is None:
+                return False, {"error": "connection closed"}
+            _read_exact(s, int.from_bytes(lenb, "big"))
+            continue
+        line = b""
+        while not line.endswith(b"\n"):
+            c = s.recv(1)
+            if not c:
+                return False, {"error": "connection closed"}
+            line += c
+        msg = json.loads(line[:-1])
+        if "phase" in msg:
+            on_progress(msg["phase"], msg.get("detail", ""))
+            continue
+        if msg.get("ok"):
+            return True, msg.get("data", {})
+        return False, {"error": msg.get("error", "unknown error")}
+
+
+def cmd_install(image, name):
+    s = connect()
+    args = {"image": image}
+    if name:
+        args["name"] = name
+    request(s, {"cmd": "install", "args": args})
+
+    def on_progress(phase, detail):
+        print(f"  [{phase}] {detail}", file=sys.stderr)
+
+    ok, data = _stream_controls(s, on_progress)
+    s.close()
+    if ok:
+        print(f"installed '{data['installed']}' -> {data['rootfs']}")
+        return 0
+    print(f"error: {data['error']}", file=sys.stderr)
+    return 1
+
+
+def cmd_list():
+    s = connect()
+    request(s, {"cmd": "list"})
+    resp = read_control_line(s)
+    s.close()
+    if not resp or not resp.get("ok"):
+        print(f"error: {resp}", file=sys.stderr)
+        return 1
+    containers = resp["data"]["containers"]
+    if not containers:
+        print("no containers installed")
+        return 0
+    name_w = max(len(c["name"]) for c in containers)
+    for c in containers:
+        mb = c["size_bytes"] / (1024 * 1024)
+        print(f"  {c['name'].ljust(name_w)}  {c['image'] or '(unknown)':30s}  {mb:8.1f} MB")
+    return 0
+
+
+def cmd_remove(name):
+    s = connect()
+    request(s, {"cmd": "remove", "args": {"name": name}})
+    resp = read_control_line(s)
+    s.close()
+    if resp and resp.get("ok"):
+        print(f"removed '{name}'")
+        return 0
+    print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+    return 1
+
+
 def cmd_run(name, command):
     s = connect()
     request(s, {"cmd": "run", "args": {"name": name, "command": command}})
@@ -164,6 +241,18 @@ def main(argv):
     cmd = args[0]
     if cmd == "ping":
         return cmd_ping()
+    if cmd == "install":
+        if len(args) < 2:
+            print("usage: apatch-chroot install IMAGE [AS_NAME]", file=sys.stderr)
+            return 2
+        return cmd_install(args[1], args[2] if len(args) > 2 else None)
+    if cmd == "list":
+        return cmd_list()
+    if cmd == "remove":
+        if len(args) < 2:
+            print("usage: apatch-chroot remove NAME", file=sys.stderr)
+            return 2
+        return cmd_remove(args[1])
     if cmd == "run":
         if len(args) < 2:
             print("usage: apatch-chroot run <name> [-- CMD...]", file=sys.stderr)
