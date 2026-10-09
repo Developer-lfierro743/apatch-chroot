@@ -104,10 +104,11 @@ Newline-delimited JSON requests over the unix socket `/dev/apatch-chroot.sock`. 
 - [x] Help system
 - [x] `install` — Docker Hub OCI pull (manifest → layers → extract)
 - [x] `list`, `remove`
-- [ ] Mount orchestration (`/dev`, `/proc`, `/sys`, devpts)
-- [ ] `kill` (stop + unmount sweep)
+- [x] Mount orchestration (`/dev`, `/proc`, `/sys`, devpts) in a private
+      mount namespace — host audio and `/dev` stay intact while a container runs
+- [ ] `kill` (stop session sweep)
 - [ ] `login` as non-root users
-- [ ] Multi-arch images via binfmt
+- [ ] APatch module packaging (boot-persistent daemon)
 
 ## License
 
