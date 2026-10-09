@@ -1,6 +1,7 @@
 id=apatch_chroot
 name=APatch Chroot
-version=v0.1.0
+version=v1.0.0
 versionCode=1
 author=Developer-lfierro743
-description=Privileged chroot daemon for Termux containers. Runs mount/chroot outside Android's app seccomp filter.
+description=Run Linux containers on Android via a privileged daemon that bypasses the app seccomp filter. Docker Hub pull, private-namespace mounts (host audio stays intact), PTY shells.
+sourceRepo=https://github.com/Developer-lfierro743/apatch-chroot

@@ -1,14 +1,25 @@
 #!/system/bin/sh
 # APatch install-time script: install the client into Termux's PATH.
+#
+# The client is three modules that import each other (apatch-chroot.py imports
+# pages and render), so they must live together. We install a small launcher
+# into Termux's bin that runs the real client from the module dir, keeping the
+# three files in one place instead of scattering them across PATH.
 
 MODDIR=${0%/*}
 BINDIR=/data/data/com.termux/files/usr/bin
-CLIENT_SRC="$MODDIR/client/apatch-chroot.py"
+PYTHON=/data/data/com.termux/files/usr/bin/python3
+CLIENT_DIR=$MODDIR/client
 
 if [ -d "$BINDIR" ]; then
-    cp -f "$CLIENT_SRC" "$BINDIR/apatch-chroot"
+    cat > "$BINDIR/apatch-chroot" <<EOF
+#!$PYTHON
+import sys
+sys.path.insert(0, "$CLIENT_DIR")
+from apatch_chroot_launcher import main
+sys.exit(main(sys.argv))
+EOF
     chmod 755 "$BINDIR/apatch-chroot"
-    # Point the client's shebang at Termux python if not already.
     echo "apatch-chroot client installed to $BINDIR/apatch-chroot"
 else
     echo "Termux bin dir not found; client not installed."
