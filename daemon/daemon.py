@@ -103,9 +103,16 @@ def main():
         pass
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCKET_PATH)
-    # The client runs as the Termux app (untrusted_app), not root, so the
-    # socket must be connectable by it. On a single-user phone the socket is
-    # the trust boundary; 0666 lets the app reach the root daemon.
+    # The socket lives under Termux's own tree so the untrusted_app can reach
+    # it. Hand it to the app's uid (com.termux = 10481) so the client fully
+    # owns its own socket — a root-owned socket in the app's 0700 home can be
+    # listed but not reliably connected to by the app.
+    try:
+        import pwd
+        app_uid = pwd.getpwnam("u0_a481").pw_uid
+    except (KeyError, ImportError):
+        app_uid = 10481
+    os.chown(SOCKET_PATH, app_uid, app_uid)
     os.chmod(SOCKET_PATH, 0o666)
     srv.listen(8)
     print(f"apatch-chroot daemon listening on {SOCKET_PATH} (uid={os.getuid()})", flush=True)
