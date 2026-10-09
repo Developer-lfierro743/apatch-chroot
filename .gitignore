@@ -5,3 +5,4 @@ __pycache__/
 daemon.log
 .venv/
 .DS_Store
+test_*.py

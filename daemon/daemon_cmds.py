@@ -49,6 +49,28 @@ def _guest_env():
     return dict(_GUEST_ENV)
 
 
+def ensure_resolv_conf(rootfs):
+    """Write a working /etc/resolv.conf into the rootfs if it lacks nameservers.
+
+    Android has no /etc/resolv.conf (netd owns DNS via properties), so a fresh
+    container image resolves nothing — apt/curl/cargo fail with "Temporary
+    failure resolving". We drop in public resolvers so the guest has DNS over
+    the daemon's (host) network. Skipped if the rootfs already has a usable
+    nameserver line, so a user's custom resolv.conf is preserved.
+    """
+    path = os.path.join(rootfs, "etc", "resolv.conf")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.isfile(path):
+            with open(path) as f:
+                if any(line.strip().startswith("nameserver") for line in f):
+                    return
+        with open(path, "w") as f:
+            f.write("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+    except OSError:
+        pass
+
+
 def run_container(args, conn):
     """Fork a chrooted child on a PTY; proxy its I/O over *conn*.
 
@@ -113,7 +135,8 @@ def run_container(args, conn):
                     # Fail safe: no mounts, chroot only. Tell the user why.
                     with contextlib.suppress(OSError):
                         os.write(2, f"apatch-chroot: mount isolation unavailable ({e}); running without mounts\n".encode())
-                    pass
+            # Give the guest DNS (Android has no /etc/resolv.conf) before chroot.
+            ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)
             os.execvpe(command[0], command, _guest_env())
