@@ -99,15 +99,20 @@ def run_container(args, conn):
             if slave_fd > 2:
                 os.close(slave_fd)
             # Unshare a private mount namespace, then mount the pseudo-fs set,
-            # all before chroot. If the kernel refuses CLONE_NEWNS we still
-            # chroot (mounts just won't be isolated — the documented fallback).
+            # all before chroot. enter_private_mount_ns VERIFIES '/' became
+            # private and setup_mounts refuses a rootfs outside CONTAINERS_DIR,
+            # so any failure here means "isolation not guaranteed" — we then
+            # chroot WITHOUT mounts rather than risk propagating onto the host.
             # No teardown needed: the namespace dies with this child on exit.
             if use_mount_ns:
                 try:
                     import mounts as mounts_mod
                     mounts_mod.enter_private_mount_ns()
                     mounts_mod.setup_mounts(rootfs)
-                except OSError:
+                except OSError as e:
+                    # Fail safe: no mounts, chroot only. Tell the user why.
+                    with contextlib.suppress(OSError):
+                        os.write(2, f"apatch-chroot: mount isolation unavailable ({e}); running without mounts\n".encode())
                     pass
             os.chroot(rootfs)
             os.chdir(cwd)

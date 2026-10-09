@@ -14,12 +14,13 @@ The set a login needs, in order:
   /dev/shm     tmpfs              (POSIX shared memory)
   /dev/mqueue  tmpfs if the host has one
 
-Teardown unmounts in reverse order, deepest first, best-effort: the namespace
-dies with the daemon child anyway, so a mount that will not come down is logged,
-not fatal.
+There is no teardown: the private mount namespace is unshared per session in
+the forked child and dies with that child on exit, so the host's mount table
+is never touched and nothing accumulates. Two guards keep it that way:
+enter_private_mount_ns verifies '/' actually became private before any mount,
+and setup_mounts refuses a rootfs outside CONTAINERS_DIR.
 """
 
-import contextlib
 import os
 
 from syscalls import (
@@ -31,23 +32,75 @@ from syscalls import (
     unshare,
 )
 
+# The only tree setup_mounts may ever mount into.
+CONTAINERS_DIR = "/data/apatch-chroot/containers"
+
 
 def enter_private_mount_ns():
     """unshare(CLONE_NEWNS) and make '/' private, so our mounts never propagate.
 
     Returns True on success. On a kernel without mount-namespace support this
     raises OSError; the caller decides whether to proceed without isolation.
+
+    Safety: this is the load-bearing step. If '/' is NOT made private, the
+    recursive /sys and /dev binds below would propagate back onto the host
+    mount table — potentially re-binding host /dev onto itself and disturbing
+    Android's core mounts. So we do NOT swallow a failure here: we verify the
+    private remount actually succeeded (re-reading /proc/self/mountinfo for a
+    'master:'/'shared:' tag on '/') and raise if it did not, so the caller
+    falls back to a mount-less chroot rather than risk the host.
     """
     unshare(CLONE_NEWNS)
-    # Make the new namespace's mounts private so nothing we do leaks to the host.
-    with contextlib.suppress(OSError):
-        mount("none", "/", None, MS_REC | MS_PRIVATE)
+    mount("none", "/", None, MS_REC | MS_PRIVATE)
+    if not _root_is_private():
+        raise OSError("could not make / private in the new mount namespace")
     return True
+
+
+def _root_is_private():
+    """True when '/' in this mount namespace carries no shared/master tag.
+
+    A private mount has neither 'shared:N' nor 'master:N' in its mountinfo
+    optional fields, which means mounts under it cannot propagate to a peer
+    group. We read /proc/self/mountinfo and check the line for mount point '/'.
+    """
+    try:
+        with open("/proc/self/mountinfo") as f:
+            for line in f:
+                fields = line.split()
+                # mountinfo: id parent major:minor root mountpoint options...
+                if len(fields) >= 5 and fields[4] == "/":
+                    optional = fields[6:] if len(fields) > 6 else []
+                    # optional fields sit between the options '-' and the fstype.
+                    if "-" in fields:
+                        dash = fields.index("-")
+                        optional = fields[6:dash]
+                    return not any(t.startswith("shared:") or t.startswith("master:") for t in optional)
+    except OSError:
+        pass
+    # If we cannot read mountinfo, assume NOT private and fail safe.
+    return False
 
 
 def _bind(src, dst):
     os.makedirs(dst, exist_ok=True)
     mount(src, dst, None, MS_BIND | MS_REC)
+
+
+def _assert_safe_rootfs(rootfs):
+    """Refuse to mount into a rootfs that is not one of our containers.
+
+    Defense in depth: setup_mounts must only ever touch
+    /data/apatch-chroot/containers/<name>/rootfs. A rootfs that resolves
+    elsewhere (a symlink, a relative path, or a caller mistake naming '/' or
+    some host directory) would have host /proc, /sys, /dev bound onto it —
+    catastrophic for Android. We canonicalise and require the containers
+    prefix, then refuse.
+    """
+    real = os.path.realpath(rootfs)
+    prefix = os.path.realpath(CONTAINERS_DIR) + os.sep
+    if not real.startswith(prefix):
+        raise OSError(f"refusing to mount into rootfs outside {CONTAINERS_DIR}: {real}")
 
 
 def setup_mounts(rootfs):
@@ -56,7 +109,11 @@ def setup_mounts(rootfs):
     Order matters: parents before children. Each entry is recorded so teardown
     can reverse it. Failures on an individual mount are logged and skipped so
     one missing piece (e.g. no /dev/mqueue) does not abort the whole login.
+
+    Refuses outright if *rootfs* is not under CONTAINERS_DIR (see
+    _assert_safe_rootfs) — this must never bind host /dev onto a host path.
     """
+    _assert_safe_rootfs(rootfs)
     mounted = []
 
     def _try(fn, target):
