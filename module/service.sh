@@ -1,38 +1,45 @@
 #!/system/bin/sh
-# APatch late_start service: start the privileged chroot daemon, but only
-# after Android has fully booted.
+# APatch late_start service: start the privileged chroot daemon.
 #
 # Runs as root, outside the app seccomp filter — that is the whole point of
 # the module; all mount/chroot work happens here.
 #
-# We deliberately wait for sys.boot_completed=1 before starting: the audio
-# HAL, servicemanager and zygote must be up, and /data must be decrypted, or
-# the daemon starts against a half-booted system. We poll rather than sleep a
-# fixed time, and give up after a bounded wait so a stuck boot does not hang
-# the service forever.
+# We cannot start until BOTH Android has booted AND the Termux prefix is
+# unlocked. Termux's home is credential-encrypted (FBE), so at early boot
+# /data/data/com.termux/files/usr/bin/python3 does not exist yet even after
+# sys.boot_completed=1 — the daemon would fail with "can't execute python3".
+# So we poll for the interpreter itself, not just the boot flag, with a
+# bounded wait so a stuck boot cannot hang the service forever.
 
-MODDIR=${0%/*}
+MODDIR=/data/adb/modules/apatch_chroot
 DAEMON_DIR=/data/apatch-chroot/daemon
 DAEMON=$DAEMON_DIR/daemon.py
 PYTHON=/data/data/com.termux/files/usr/bin/python3
 
-# Wait for boot to complete (max ~60s).
+# Install all daemon files (first boot / update). These live under /data (not
+# the encrypted Termux home), so this works as soon as /data is mounted.
+mkdir -p "$DAEMON_DIR"
+for f in daemon.py daemon_cmds.py registry.py layer_extract.py arch.py mounts.py syscalls.py; do
+    cp -f "$MODDIR/daemon/$f" "$DAEMON_DIR/" 2>/dev/null
+done
+chmod 755 "$DAEMON_DIR"
+
+# Wait until Android has booted AND the Termux interpreter is runnable
+# (max ~120s). Both gates, because either alone is not enough.
 i=0
-while [ "$i" -lt 60 ]; do
+while [ "$i" -lt 120 ]; do
     bc=$(getprop sys.boot_completed 2>/dev/null)
-    if [ "$bc" = "1" ]; then
+    if [ "$bc" = "1" ] && [ -x "$PYTHON" ]; then
         break
     fi
     sleep 1
     i=$((i + 1))
 done
 
-# Install all daemon files (first boot / update).
-mkdir -p "$DAEMON_DIR"
-for f in daemon.py daemon_cmds.py registry.py layer_extract.py arch.py mounts.py syscalls.py; do
-    cp -f "$MODDIR/daemon/$f" "$DAEMON_DIR/" 2>/dev/null
-done
-chmod 755 "$DAEMON_DIR"
+if [ ! -x "$PYTHON" ]; then
+    echo "Termux python not available after wait; daemon not started" > "$MODDIR/daemon.log"
+    exit 0
+fi
 
 # Kill any previous instance.
 pkill -f "$DAEMON" 2>/dev/null
