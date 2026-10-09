@@ -156,7 +156,7 @@ def apply_layer(layer_path, rootfs):
                             if src and os.path.exists(src):
                                 _ensure_parent(dest)
                                 _rmtree(dest)
-                                os.link(src, dest)
+                                _hardlink_or_copy(src, dest)
                                 applied += 1
                     elif member.isreg():
                         _ensure_parent(dest)
@@ -181,6 +181,20 @@ def _ensure_parent(dest):
     parent = os.path.dirname(dest)
     if parent:
         os.makedirs(parent, exist_ok=True)
+
+
+def _hardlink_or_copy(src, dest):
+    """Hardlink src -> dest, falling back to a copy.
+
+    Bionic's Python does not expose os.link, so a hardlink raises
+    AttributeError; copy the bytes instead. Either way *dest* ends up with
+    src's content, which is all a tar hardlink entry means.
+    """
+    import shutil
+    try:
+        os.link(src, dest)
+    except (AttributeError, OSError):
+        shutil.copy2(src, dest, follow_symlinks=False)
 
 
 def _chmod_apply(path, mode):
