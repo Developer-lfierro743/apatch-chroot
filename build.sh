@@ -21,9 +21,10 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 # Module glue at the zip root.
-cp "$HERE/module/module.prop" "$STAGE/"
-cp "$HERE/module/service.sh" "$STAGE/"
+cp "$HERE/module/module.prop"  "$STAGE/"
+cp "$HERE/module/service.sh"   "$STAGE/"
 cp "$HERE/module/customize.sh" "$STAGE/"
+cp "$HERE/module/watchdog.sh"  "$STAGE/"
 
 # Daemon + client trees (no __pycache__).
 mkdir -p "$STAGE/daemon" "$STAGE/client"

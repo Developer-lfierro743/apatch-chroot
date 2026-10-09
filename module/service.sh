@@ -1,20 +1,19 @@
 #!/system/bin/sh
-# APatch late_start service: start the privileged chroot daemon.
+# APatch late_start service: hand off to the daemon watchdog.
 #
 # Runs as root, outside the app seccomp filter — that is the whole point of
 # the module; all mount/chroot work happens here.
 #
-# We cannot start until BOTH Android has booted AND the Termux prefix is
-# unlocked. Termux's home is credential-encrypted (FBE), so at early boot
-# /data/data/com.termux/files/usr/bin/python3 does not exist yet even after
-# sys.boot_completed=1 — the daemon would fail with "can't execute python3".
-# So we poll for the interpreter itself, not just the boot flag, with a
-# bounded wait so a stuck boot cannot hang the service forever.
+# We wait until BOTH Android has booted AND the Termux prefix is unlocked
+# (Termux's home is credential-encrypted, so python3 is not executable until
+# FBE unlocks even after sys.boot_completed=1), then launch watchdog.sh which
+# owns the daemon's lifecycle — starting it and restarting it if it ever dies.
+# Bounded wait so a stuck boot cannot hang the service forever.
 
 MODDIR=/data/adb/modules/apatch_chroot
 DAEMON_DIR=/data/apatch-chroot/daemon
-DAEMON=$DAEMON_DIR/daemon.py
 PYTHON=/data/data/com.termux/files/usr/bin/python3
+WATCHDOG=$MODDIR/watchdog.sh
 
 # Install all daemon files (first boot / update). These live under /data (not
 # the encrypted Termux home), so this works as soon as /data is mounted.
@@ -37,14 +36,18 @@ while [ "$i" -lt 120 ]; do
 done
 
 if [ ! -x "$PYTHON" ]; then
-    echo "Termux python not available after wait; daemon not started" > "$MODDIR/daemon.log"
+    echo "Termux python not available after wait; watchdog not started" > "$MODDIR/daemon.log"
     exit 0
 fi
 
-# Kill any previous instance.
-pkill -f "$DAEMON" 2>/dev/null
+# Don't start a second watchdog if one is already running (e.g. after a
+# module re-enable without a reboot).
+if pgrep -f "$WATCHDOG" >/dev/null 2>&1; then
+    exit 0
+fi
 
-# Start the daemon, detached, logging to the module dir.
-nohup "$PYTHON" "$DAEMON" > "$MODDIR/daemon.log" 2>&1 &
+# Launch the watchdog detached; it survives after this script returns and
+# keeps the daemon alive.
+setsid sh "$WATCHDOG" >/dev/null 2>&1 &
 
 exit 0
