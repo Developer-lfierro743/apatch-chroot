@@ -20,7 +20,7 @@ import socket
 import sys
 import threading
 
-SOCKET_PATH = "/dev/apatch-chroot.sock"
+SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock"
 CONTAINERS_DIR = "/data/apatch-chroot/containers"
 
 
@@ -94,6 +94,9 @@ def serve(conn):
 
 def main():
     os.makedirs(CONTAINERS_DIR, exist_ok=True)
+    # The socket lives under Termux's own tree so the untrusted_app can reach
+    # it (a socket in /dev gets a device:s0 context SELinux forbids the app).
+    os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
     try:
         os.unlink(SOCKET_PATH)
     except OSError:

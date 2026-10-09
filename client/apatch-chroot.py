@@ -18,7 +18,7 @@ import sys
 from pages import HELP_PAGES, TOP_COMMANDS
 from render import render_front, render_page, term_width
 
-SOCKET_PATH = "/dev/apatch-chroot.sock"
+SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock"
 VERSION = "v0.1.0"
 PROGRAM = "apatch-chroot"
 
