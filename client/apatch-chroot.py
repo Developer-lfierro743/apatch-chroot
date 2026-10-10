@@ -19,14 +19,24 @@ from pages import HELP_PAGES, TOP_COMMANDS
 from render import render_front, render_page, term_width
 
 SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock"
+# Older installs left the daemon on /dev; try it too so a stale client still
+# finds the daemon after an upgrade.
+SOCKET_FALLBACKS = ("/dev/apatch-chroot.sock",)
 VERSION = "v0.1.0"
 PROGRAM = "apatch-chroot"
 
 
 def connect():
+    """Connect to the daemon socket, trying the primary path then fallbacks."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(SOCKET_PATH)
-    return s
+    last = None
+    for path in (SOCKET_PATH, *SOCKET_FALLBACKS):
+        try:
+            s.connect(path)
+            return s
+        except OSError as e:
+            last = e
+    raise last
 
 
 def request(s, obj):
