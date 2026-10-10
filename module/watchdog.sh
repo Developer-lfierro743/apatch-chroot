@@ -17,16 +17,21 @@ DAEMON=$DAEMON_DIR/daemon.py
 PYTHON=/data/data/com.termux/files/usr/bin/python3
 SOCK=/data/data/com.termux/files/usr/tmp/apatch-chroot.sock
 LOG=$MODDIR/daemon.log
-PIDFILE=$MODDIR/watchdog.pid
+LOCKDIR=$MODDIR/watchdog.lock
 
-# Single-instance lock: if a live watchdog already holds the pidfile, exit.
-if [ -f "$PIDFILE" ]; then
-    old=$(cat "$PIDFILE" 2>/dev/null)
+# Atomic single-instance lock via mkdir. A plain pidfile check is racy: APatch
+# can trigger service.sh several times before the first watchdog writes its
+# pidfile, so N watchdogs all pass "not locked" and spawn N daemons fighting
+# over one socket. mkdir is atomic on every filesystem: exactly one wins.
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    old=$(cat "$LOCKDIR/pid" 2>/dev/null)
     if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
         exit 0
     fi
+    rm -rf "$LOCKDIR"
+    mkdir "$LOCKDIR" 2>/dev/null || exit 0
 fi
-echo $$ > "$PIDFILE"
+echo $$ > "$LOCKDIR/pid"
 
 while true; do
     if [ -x "$PYTHON" ]; then
