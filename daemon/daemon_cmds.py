@@ -336,7 +336,10 @@ def list_containers(args):
         return {"ok": True, "data": {"containers": []}}
     for name in sorted(os.listdir(CONTAINERS_DIR)):
         rootfs = os.path.join(CONTAINERS_DIR, name, "rootfs")
-        if not os.path.isdir(rootfs):
+        # Skip anything that is not a REAL directory under containers/. A
+        # symlinked rootfs (leftover test container) would make _du() walk an
+        # unrelated tree (e.g. chroot-distro) and hang — islink() first.
+        if os.path.islink(rootfs) or not os.path.isdir(rootfs):
             continue
         image = ""
         meta = os.path.join(CONTAINERS_DIR, name, "image")
@@ -349,11 +352,18 @@ def list_containers(args):
 
 
 def _du(path):
+    """Disk usage of a tree, WITHOUT following symlinks (avoids walks into
+    unrelated mounts/loops that would hang)."""
     total = 0
-    for root, dirs, files in os.walk(path):
+    for root, dirs, files in os.walk(path, followlinks=False):
+        # Prune symlinked subdirs so os.walk never descends into them.
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
         for f in files:
+            fp = os.path.join(root, f)
+            if os.path.islink(fp):
+                continue
             with contextlib.suppress(OSError):
-                total += os.path.getsize(os.path.join(root, f))
+                total += os.path.getsize(fp)
     return total
 
 
