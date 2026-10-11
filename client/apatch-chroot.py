@@ -167,6 +167,44 @@ def cmd_ping():
     return 1
 
 
+def _human(nbytes):
+    """Format bytes as a human-readable size (GiB/MiB)."""
+    n = float(nbytes)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
+        n /= 1024
+    return f"{n:.1f} TiB"
+
+
+def cmd_info():
+    s = connect()
+    request(s, {"cmd": "info"})
+    resp = read_control_line(s)
+    s.close()
+    if not (resp and resp.get("ok")):
+        print(f"error: {(resp or {}).get('error', 'could not reach daemon')}", file=sys.stderr)
+        return 1
+    d = resp["data"]
+    caps = d.get("capabilities", {})
+    seccomp_mode = caps.get("seccomp_mode")
+    seccomp_txt = {None: "unknown", 0: "none (unfiltered — good)", 1: "strict", 2: "filtered"}.get(
+        seccomp_mode, f"mode {seccomp_mode}"
+    )
+    print("apatch-chroot info")
+    print(f"  daemon:      pid {d.get('daemon_pid')} (uid {d.get('daemon_uid')})")
+    print(f"  python:      {d.get('python')}")
+    print(f"  kernel:      {d.get('kernel')}")
+    print(f"  arch:        {d.get('arch')}")
+    print(f"  containers:  {d.get('containers')} ({_human(d.get('containers_bytes', 0))})")
+    print(f"  store:       {d.get('containers_dir')}")
+    print("  capabilities:")
+    print(f"    mount namespace:   {'yes' if caps.get('mount_namespace') else 'NO'}")
+    print(f"    binfmt_misc:       {'yes' if caps.get('binfmt_misc') else 'no'} (for --box64)")
+    print(f"    seccomp:           {seccomp_txt}")
+    return 0
+
+
 def _stream_controls(s, on_progress):
     """Read framed control messages until a final ok/error one. Returns (ok, data)."""
     while True:
@@ -515,6 +553,8 @@ def main(argv):
     cmd = args[0]
     if cmd == "ping":
         return cmd_ping()
+    if cmd == "info":
+        return cmd_info()
     if cmd == "install":
         if len(args) < 2:
             print("usage: apatch-chroot install IMAGE [AS_NAME]", file=sys.stderr)

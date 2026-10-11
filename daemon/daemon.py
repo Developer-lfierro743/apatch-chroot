@@ -96,6 +96,9 @@ def handle_request(req, conn):
         if not ok:
             return {"ok": False, "error": f"could not set user for '{a.get('name')}'"}
         return {"ok": True, "data": {"name": a.get("name"), "user": a.get("user")}}
+    if cmd == "info":
+        from daemon_cmds import host_info
+        return {"ok": True, "data": host_info()}
     if cmd == "shutdown":
         return {"ok": True, "data": {"bye": True}, "_shutdown": True}
     return {"ok": False, "error": f"unknown cmd: {cmd}"}

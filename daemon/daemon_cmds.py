@@ -55,6 +55,75 @@ def _guest_env(display=False):
     return env
 
 
+def host_info():
+    """Report daemon status and host capability probes.
+
+    Probes what this device actually supports so a missing feature is
+    explained rather than guessed at. Returns a dict consumed by the client's
+    'info' command. Never raises — every probe is best-effort.
+    """
+    import platform
+
+    def _read(path):
+        with contextlib.suppress(OSError):
+            with open(path) as f:
+                return f.read().strip()
+        return None
+
+    # Kernel / arch.
+    uname = platform.uname()
+    arch = platform.machine()
+
+    # Mount namespace support: read from /proc/filesystems + a kernel config
+    # hint. A fork/unshare probe is unsafe inside the daemon's relay threads
+    # (fork in a threaded process is hazardous), so we probe read-only instead:
+    # if /proc/self/ns/mnt exists, mount namespaces are supported by the kernel.
+    mount_ns = os.path.exists("/proc/self/ns/mnt")
+
+    # binfmt_misc: is it mounted/available?
+    binfmt = os.path.isdir("/proc/sys/fs/binfmt_misc")
+
+    # seccomp: check if we're in an unfiltered (root daemon) context.
+    # /proc/self/status has a Seccomp field (0=disabled, 1=strict, 2=filter).
+    seccomp = _read("/proc/self/status")
+    seccomp_mode = None
+    if seccomp:
+        for line in seccomp.splitlines():
+            if line.startswith("Seccomp:"):
+                with contextlib.suppress(ValueError):
+                    seccomp_mode = int(line.split()[1])
+
+    # Container count + total size.
+    n_containers = 0
+    total_bytes = 0
+    if os.path.isdir(CONTAINERS_DIR):
+        for name in os.listdir(CONTAINERS_DIR):
+            rootfs = os.path.join(CONTAINERS_DIR, name, "rootfs")
+            if os.path.islink(rootfs) or not os.path.isdir(rootfs):
+                continue
+            n_containers += 1
+            with contextlib.suppress(Exception):
+                total_bytes += _du(rootfs)
+
+    return {
+        "daemon_pid": os.getpid(),
+        "daemon_uid": os.getuid(),
+        "python": platform.python_version(),
+        "kernel": uname.release,
+        "arch": arch,
+        "containers_dir": CONTAINERS_DIR,
+        "containers": n_containers,
+        "containers_bytes": total_bytes,
+        "capabilities": {
+            "mount_namespace": mount_ns,
+            "binfmt_misc": binfmt,
+            # seccomp 0 = we run unfiltered (the whole point of the root daemon)
+            "seccomp_filtered": seccomp_mode not in (None, 0),
+            "seccomp_mode": seccomp_mode,
+        },
+    }
+
+
 # --- default-user handling (least privilege inside the container) ----------
 #
 # The daemon must be root to chroot/mount, but the container login does NOT
