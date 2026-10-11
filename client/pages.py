@@ -23,7 +23,7 @@ TOP_COMMANDS = (
     ("login", "Open an interactive shell inside a container."),
     ("list", "List installed containers."),
     ("kill", "Stop a container and tear down its mounts."),
-    ("remove", "Delete a container and its rootfs."),
+    ("remove", "Delete a container and its rootfs.", "!deletes all data — no undo"),
     ("info", "Show daemon and host capability status."),
 )
 

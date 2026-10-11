@@ -33,6 +33,7 @@ class C:
     CYAN = "\033[36m" if enabled else ""
     GREEN = "\033[32m" if enabled else ""
     YELLOW = "\033[33m" if enabled else ""
+    RED = "\033[31m" if enabled else ""
     BOLD = "\033[1m" if enabled else ""
     DIM = "\033[2m" if enabled else ""
     RST = "\033[0m" if enabled else ""
@@ -143,13 +144,18 @@ def render_front(program, version, top_commands, width, notes=()):
     for entry in top_commands:
         name, desc = entry[0], entry[1]
         warn = entry[2] if len(entry) > 2 else None
-        print(f"  {C.GREEN}{name.ljust(name_w)}{C.RST}", file=sys.stderr)
+        # A warning prefixed with "!" marks a destructive command; its name is
+        # shown in RED so 'remove' (deletes data) reads as dangerous.
+        danger = bool(warn) and warn.startswith("!")
+        warn_text = warn[1:].strip() if danger else warn
+        name_color = C.RED if danger else C.GREEN
+        print(f"  {name_color}{name.ljust(name_w)}{C.RST}", file=sys.stderr)
         # Description, wrapped, aligned under the command name.
         for line in _wrap(desc, width - name_w - 6):
             print(f"{indent}{line}", file=sys.stderr)
         # Warning on its own wrapped line(s) so it never overruns the width.
-        if warn:
-            for line in _wrap(f"({warn})", width - name_w - 8):
+        if warn_text:
+            for line in _wrap(f"({warn_text})", width - name_w - 8):
                 print(f"{indent}  {C.YELLOW}{line}{C.RST}", file=sys.stderr)
     print(file=sys.stderr)
     if notes:
