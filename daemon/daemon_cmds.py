@@ -186,6 +186,15 @@ def run_container(args, conn):
                     # Fail safe: no mounts, chroot only. Tell the user why.
                     with contextlib.suppress(OSError):
                         os.write(2, f"apatch-chroot: mount isolation unavailable ({e}); running without mounts\n".encode())
+            # Optional box64: register x86_64 -> box64 in THIS private namespace
+            # only (invisible to Android's arm64 apps and to the host). Skipped
+            # silently if the kernel lacks binfmt_misc or box64 isn't installed.
+            if args.get("use_box64"):
+                with contextlib.suppress(Exception):
+                    import binfmt as binfmt_mod
+                    if binfmt_mod.register_box64(rootfs):
+                        with contextlib.suppress(OSError):
+                            os.write(2, b"apatch-chroot: box64 registered (x86_64 enabled)\n")
             # Give the guest DNS (Android has no /etc/resolv.conf) before chroot.
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
@@ -653,6 +662,11 @@ def exec_container(args, conn):
                 mounts_mod.setup_mounts(rootfs)
             except OSError:
                 pass
+            # Optional box64: register x86_64 -> box64 in THIS namespace only.
+            if args.get("use_box64"):
+                with contextlib.suppress(Exception):
+                    import binfmt as binfmt_mod
+                    binfmt_mod.register_box64(rootfs)
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)

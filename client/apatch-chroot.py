@@ -283,10 +283,10 @@ def cmd_kill(name):
     return 1
 
 
-def cmd_exec(name, command, use_init=False):
+def cmd_exec(name, command, use_init=False, use_box64=False):
     """Run a command non-interactively; print its output and exit code."""
     s = connect()
-    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init}})
+    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64}})
     resp = read_control_line(s)
     s.close()
     if not resp or not resp.get("ok"):
@@ -367,9 +367,9 @@ def cmd_service(name, verb, unit=None):
     return data.get("exit", 0)
 
 
-def cmd_run(name, command, use_init=False):
+def cmd_run(name, command, use_init=False, use_box64=False):
     s = connect()
-    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init}})
+    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64}})
     import termios
     import tty
 
@@ -481,13 +481,14 @@ def main(argv):
         name = args[1]
         rest = args[2:]
         use_init = "--init" in rest
-        rest = [a for a in rest if a != "--init"]
+        use_box64 = "--box64" in rest
+        rest = [a for a in rest if a not in ("--init", "--box64")]
         if rest and rest[0] == "--":
             rest = rest[1:]
         if not rest:
             print("usage: apatch-chroot exec NAME -- CMD [ARG...]", file=sys.stderr)
             return 2
-        return cmd_exec(name, rest, use_init=use_init)
+        return cmd_exec(name, rest, use_init=use_init, use_box64=use_box64)
     if cmd == "clone":
         if len(args) < 3:
             print("usage: apatch-chroot clone SRC DST", file=sys.stderr)
@@ -512,16 +513,17 @@ def main(argv):
         return cmd_service(args[1], args[2], unit)
     if cmd == "run":
         if len(args) < 2:
-            print("usage: apatch-chroot run <name> [--init] [-- CMD...]", file=sys.stderr)
+            print("usage: apatch-chroot run <name> [--init] [--box64] [-- CMD...]", file=sys.stderr)
             return 2
         name = args[1]
         rest = args[2:]
         use_init = "--init" in rest
-        rest = [a for a in rest if a != "--init"]
+        use_box64 = "--box64" in rest
+        rest = [a for a in rest if a not in ("--init", "--box64")]
         if rest and rest[0] == "--":
             rest = rest[1:]
         command = rest or ["/bin/bash"]
-        return cmd_run(name, command, use_init=use_init)
+        return cmd_run(name, command, use_init=use_init, use_box64=use_box64)
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 
