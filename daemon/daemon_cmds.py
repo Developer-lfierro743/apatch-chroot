@@ -49,6 +49,31 @@ def _guest_env():
     return dict(_GUEST_ENV)
 
 
+# Path to the init supervisor shipped alongside the daemon.
+INIT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "init.sh")
+
+
+def stage_init(rootfs):
+    """Copy the container init supervisor into the rootfs so it can be PID 1.
+
+    Returns the in-container path to init.sh, or None if it could not be
+    staged (missing script). The init becomes the chroot's PID 1 and runs the
+    user's command as a child — Android's own PID 1 is never involved (the
+    daemon forks into a private mount namespace first).
+    """
+    if not os.path.isfile(INIT_SCRIPT):
+        return None
+    dest_dir = os.path.join(rootfs, "usr", "local", "bin")
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, "apatch-init")
+        shutil.copy2(INIT_SCRIPT, dest)
+        os.chmod(dest, 0o755)
+        return "/usr/local/bin/apatch-init"
+    except OSError:
+        return None
+
+
 def ensure_resolv_conf(rootfs):
     """Write a working /etc/resolv.conf into the rootfs if it lacks nameservers.
 
@@ -139,6 +164,16 @@ def run_container(args, conn):
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)
+            # With use_init, the container's PID 1 is our mini-init supervisor
+            # (starts services, reaps zombies, runs the command as a child).
+            # Android's own PID 1 is untouched — this runs in the child's
+            # private mount namespace. Init is invoked via /bin/sh since some
+            # minimal images lack a shebang handler.
+            if args.get("use_init"):
+                init_path = stage_init(rootfs)
+                if init_path:
+                    os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env())
+                # Fall through to plain exec if staging failed.
             os.execvpe(command[0], command, _guest_env())
         except Exception as e:
             with contextlib.suppress(OSError):
@@ -569,6 +604,10 @@ def exec_container(args, conn):
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)
+            if args.get("use_init"):
+                init_path = stage_init(rootfs)
+                if init_path:
+                    os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env())
             os.execvpe(command[0], command, _guest_env())
         except Exception as e:
             with contextlib.suppress(OSError):
