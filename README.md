@@ -80,6 +80,10 @@ apatch-chroot kill ubuntu             # stop + unmount
 apatch-chroot remove ubuntu           # delete the container (red = destructive)
 apatch-chroot convert ubuntu          # import a chroot-distro container
 
+# Login user (least privilege — see "Login user" below)
+apatch-chroot setuser ubuntu luis     # log in as 'luis' by default
+apatch-chroot login ubuntu --root     # force root just this session
+
 # Service management (see "Container services" below)
 apatch-chroot run ubuntu --init       # start the container's service manager
 apatch-chroot service ubuntu start sshd      # manage a service from the host
@@ -112,10 +116,12 @@ apatch-chroot install --help
 | `kill NAME` | Stop sessions + tear down mounts. |
 | `remove NAME` | Delete a container and its rootfs. |
 | `service NAME VERB [UNIT]` | Manage a container's services from the host (start/stop/enable/status). |
+| `setuser NAME [USER]` | Set a container's default login user (least privilege). |
 | `info` | Daemon status + host capability probes. |
 
-Both `run` and `exec` take optional flags: `--init` (start the container's
-service manager) and `--box64` (enable x86_64 emulation for the session).
+`run`, `login`, and `exec` take optional flags: `--init` (start the
+container's service manager), `--box64` (enable x86_64 emulation),
+`--user U` (log in as U just this session), and `--root` (force root).
 
 ## Architecture
 
@@ -166,7 +172,27 @@ Newline-delimited JSON requests over the broker's unix socket. Responses are fra
 - [x] `systemctl` hijack — drop-in shim so Ubuntu's service commands work
 - [x] `service` command — manage container services from the host
 - [x] Optional box64 — per-container x86_64 emulation
-- [ ] `login` as non-root users
+- [x] `login` as non-root users (`setuser` + `--user`/`--root`)
+- [ ] **Live on-device verification of the service/init/convert paths** (see "Release status" below)
+
+## Release status
+
+Everything below is **implemented and unit-verified locally**, but not yet
+exercised end-to-end on a physical device in one pass — treat this as a
+strong beta, not a battle-tested release:
+
+- `--init` (mini-systemd), the `systemctl` shim, and `service` — logic verified
+  in isolation (supervisor start/restart/cooldown/teardown; shim verbs + exit
+  codes); a full container boot with services running has not been run live.
+- `convert` — the copy + mount-guard logic is verified; a real chroot-distro
+  import has not completed end-to-end (blocked on that tool's ghost mounts).
+- `--box64` — registration is namespace-scoped and degrades safely; not run
+  against a real x86_64 binary yet.
+- The suid+exec rootfs remount (so `sudo` works) is written but not confirmed
+  on-device.
+
+The core daemon, broker, watchdog, OCI `install`, `exec`/`clone`/`push`/`pull`,
+and mount isolation **have** been verified live on-device.
 
 ## Container services (mini-systemd)
 
@@ -240,6 +266,31 @@ apatch-chroot exec ubuntu --box64 -- ./my-x86_64-app
 If the kernel lacks `binfmt_misc` or box64 isn't installed, it degrades
 gracefully to native-only. It's opt-in, not default, because box64's JIT is
 still unstable on multithreaded x86_64 code.
+
+## Login user (least privilege)
+
+The daemon must run as root to `chroot`/`mount`, but your container login does
+**not** have to be root. Each container can declare a default login user, which
+`run`/`login`/`exec` drop to (via `setuid`/`setgid`, resolved from the
+**container's own** `/etc/passwd`, so it matches the container's users, not the
+host's).
+
+```sh
+apatch-chroot setuser ubuntu luis   # log in as 'luis' by default
+apatch-chroot setuser ubuntu root   # restore root (legacy default)
+apatch-chroot login ubuntu          # now drops to 'luis'
+```
+
+Per-session overrides: `--user U` logs in as U just this time, `--root` forces
+root even when a default user is set. Once a default user is set, **root is
+opt-in, never the silent default**. (`--init` always runs as root — the
+supervisor is PID 1.)
+
+> **Why `sudo` works:** Android mounts `/data` (where container rootfs lives)
+> with `nosuid`, which makes setuid binaries like `sudo` silently run as the
+> caller. APatch Chroot remounts the rootfs `suid,exec` inside the container's
+> private mount namespace, so `sudo` works in-container while Android's own
+> mount is untouched.
 
 ## License
 

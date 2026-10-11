@@ -583,6 +583,22 @@ def main(argv):
             rest = rest[1:]
         command = rest or ["/bin/bash"]
         return cmd_run(name, command, use_init=use_init, use_box64=use_box64, user=user, as_root=as_root)
+    if cmd == "login":
+        if len(args) < 2:
+            print("usage: apatch-chroot login <name> [--init] [--box64] [--user U] [--root]", file=sys.stderr)
+            return 2
+        name = args[1]
+        rest = args[2:]
+        use_init = "--init" in rest
+        use_box64 = "--box64" in rest
+        as_root = "--root" in rest
+        user = None
+        if "--user" in rest:
+            i = rest.index("--user")
+            if i + 1 < len(rest):
+                user = rest[i + 1]
+        # login is just run with an interactive shell.
+        return cmd_run(name, ["/bin/bash"], use_init=use_init, use_box64=use_box64, user=user, as_root=as_root)
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 
