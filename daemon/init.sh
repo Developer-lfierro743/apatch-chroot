@@ -123,20 +123,68 @@ cleanup() {
 trap 'EXIT_CODE=130; cleanup' INT TERM
 trap 'cleanup' EXIT
 
-# Supervise: block on any child, then top up services. Loop until the shell
-# exits (or forever if there is no shell).
+# Supervise with a timed poll. `wait -n` returns immediately when there are
+# no unwaited children (POSIX sh), which would busy-loop and respawn a dead
+# service hundreds of times a second. Instead we sleep CHECK_INTERVAL between
+# passes and enforce a per-service respawn cooldown so a crash-looping service
+# backs off instead of hammering the CPU.
+CHECK_INTERVAL="${APATCH_CHECK_INTERVAL:-2}"
+RESPAWN_COOLDOWN="${APATCH_RESPAWN_COOLDOWN:-5}"
+
+# Track last-respawn time per service (epoch seconds) in the rundir.
+note_respawn() { date +%s > "$RUNDIR/.respawn.$1"; }
+respawn_cooled() {
+    # True if at least RESPAWN_COOLDOWN seconds since the last respawn.
+    _f="$RUNDIR/.respawn.$1"
+    [ -f "$_f" ] || return 0
+    _last=$(cat "$_f" 2>/dev/null || echo 0)
+    _now=$(date +%s)
+    [ $((_now - _last)) -ge "$RESPAWN_COOLDOWN" ]
+}
+
+# check_services with cooldown: restart a dead enabled service only if it has
+# cooled down since its last respawn.
+check_services_cooldown() {
+    [ -f "$SERVICES_CONF" ] || return 0
+    while IFS='|' read -r name enabled cmd; do
+        case "$name" in ''|\#*) continue ;; esac
+        name=$(echo "$name" | tr -d ' ')
+        enabled=$(echo "$enabled" | tr -d ' ')
+        cmd=$(echo "$cmd" | sed 's/^ *//; s/ *$//')
+        [ "$enabled" = "1" ] || continue
+        [ -z "$name" ] && continue
+        if ! is_running "$name"; then
+            if respawn_cooled "$name"; then
+                log "$name not running; restarting"
+                note_respawn "$name"
+                # shellcheck disable=SC2086
+                start_service "$name" $cmd
+            fi
+        fi
+    done < "$SERVICES_CONF"
+}
+
+# Reap finished background children without blocking. POSIX sh has no
+# non-blocking wait, so we rely on the shell reaping background jobs when it
+# next runs `wait`; a lightweight `wait -n` here would BLOCK until a child
+# exits, defeating the timed poll. Instead we do nothing special — dead
+# service processes are reaped lazily and check_services_cooldown restarts
+# them. The few zombies between passes are harmless and cleared on exit.
+reap_children() { :; }
+
 if [ -n "$SHELL_PID" ]; then
     while kill -0 "$SHELL_PID" 2>/dev/null; do
-        wait -n 2>/dev/null
-        # A child was reaped; restart any dead service.
-        check_services
+        reap_children
+        check_services_cooldown
+        sleep "$CHECK_INTERVAL"
     done
     wait "$SHELL_PID" 2>/dev/null
     EXIT_CODE=$?
 else
     while true; do
-        wait -n 2>/dev/null
-        check_services
+        reap_children
+        check_services_cooldown
+        sleep "$CHECK_INTERVAL"
     done
 fi
 
