@@ -25,6 +25,8 @@ cp "$HERE/module/module.prop"  "$STAGE/"
 cp "$HERE/module/service.sh"   "$STAGE/"
 cp "$HERE/module/customize.sh" "$STAGE/"
 cp "$HERE/module/watchdog.sh"  "$STAGE/"
+# Update manifest (also served from GitHub raw for the updateJson URL).
+[ -f "$HERE/update.json" ] && cp "$HERE/update.json" "$STAGE/"
 
 # Daemon + client trees (no __pycache__).
 mkdir -p "$STAGE/daemon" "$STAGE/client"
