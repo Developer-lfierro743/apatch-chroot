@@ -88,6 +88,14 @@ def handle_request(req, conn):
         # (installed by stage_init when the container was run with --init).
         from daemon_cmds import service_container
         return service_container(req.get("args", {}), conn)
+    if cmd == "setuser":
+        # Set (or clear with user='' or 'root') a container's default login user.
+        from daemon_cmds import write_default_user
+        a = req.get("args", {})
+        ok = write_default_user(a.get("name"), a.get("user"))
+        if not ok:
+            return {"ok": False, "error": f"could not set user for '{a.get('name')}'"}
+        return {"ok": True, "data": {"name": a.get("name"), "user": a.get("user")}}
     if cmd == "shutdown":
         return {"ok": True, "data": {"bye": True}, "_shutdown": True}
     return {"ok": False, "error": f"unknown cmd: {cmd}"}

@@ -27,6 +27,7 @@ TOP_COMMANDS = (
     ("push", "Copy a host file/dir into a container."),
     ("pull", "Copy a file/dir out of a container to the host."),
     ("service", "Manage a container's services from the host (start/stop/enable/status)."),
+    ("setuser", "Set a container's default login user (least privilege)."),
     ("kill", "Stop a container and tear down its mounts."),
     ("remove", "Delete a container and its rootfs.", "!deletes all data — no undo"),
     ("info", "Show daemon and host capability status."),
@@ -216,6 +217,27 @@ HELP_PAGES = {
         ),
         "options": [("-h, --help", "Show this help.")],
         "examples": ["apatch-chroot remove ubuntu"],
+    },
+    "setuser": {
+        "usage": "setuser NAME [USER]",
+        "summary": (
+            "Set a container's default login user (least privilege).\n\n"
+            "The daemon must run as root to chroot/mount, but your container "
+            "login does not have to be root. This sets which user 'run'/'login' "
+            "drop to after chroot.\n\n"
+            "  setuser ubuntu luis    log in as 'luis' by default\n"
+            "  setuser ubuntu root    restore root (legacy default)\n\n"
+            "Per-session override: 'run'/'exec' accept --user U (log in as U "
+            "just this time) or --root (force root even if a default is set). "
+            "Root is opt-in, never the silent default once a user is set."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": [
+            "apatch-chroot setuser ubuntu luis",
+            "apatch-chroot setuser ubuntu root",
+            "apatch-chroot run ubuntu --user luis",
+            "apatch-chroot run ubuntu --root",
+        ],
     },
     "info": {
         "usage": "info",

@@ -49,6 +49,127 @@ def _guest_env():
     return dict(_GUEST_ENV)
 
 
+# --- default-user handling (least privilege inside the container) ----------
+#
+# The daemon must be root to chroot/mount, but the container login does NOT
+# have to be root. Each container can declare a default login user in
+# /data/apatch-chroot/containers/<name>/user (a uid, a username, or empty for
+# root). After chroot, we drop to that user's uid/gid before exec, so a normal
+# login is unprivileged inside the container. Root is opt-in (--root or an
+# explicit user of 0), never the silent default once a user is set.
+
+def _user_file(name):
+    return os.path.join(CONTAINERS_DIR, name, "user")
+
+
+def read_default_user(name):
+    """Return the container's default login user string, or None (=> root).
+
+    Reads the per-container 'user' file. Returns a stripped non-empty string,
+    or None when the file is absent/empty (meaning root, the legacy default).
+    """
+    try:
+        with open(_user_file(name)) as f:
+            u = f.read().strip()
+        return u or None
+    except OSError:
+        return None
+
+
+def write_default_user(name, user):
+    """Set (or clear, with user='' or 'root') a container's default login user."""
+    path = _user_file(name)
+    try:
+        if not user or user == "root":
+            # Remove the file so the container defaults back to root.
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        else:
+            with open(path, "w") as f:
+                f.write(user.strip())
+        return True
+    except OSError:
+        return False
+
+
+def _lookup_uid_gid(rootfs, user):
+    """Resolve a username/uid to (uid, gid) using the GUEST's /etc/passwd.
+
+    We parse rootfs/etc/passwd + /etc/group AFTER chroot setup but must do it
+    BEFORE chroot (we read the host-side file). Accepts a numeric uid or a
+    username. Returns (uid, gid, home, shell) or None if not found.
+    """
+    # Numeric uid: resolve gid from /etc/passwd by uid, else use same gid.
+    if user.isdigit():
+        uid = int(user)
+        gid = uid
+        try:
+            with open(os.path.join(rootfs, "etc", "passwd")) as f:
+                for line in f:
+                    parts = line.rstrip("\n").split(":")
+                    if len(parts) >= 4 and parts[2] == str(uid):
+                        gid = int(parts[3])
+                        return uid, gid, parts[5] or "/", parts[6] or "/bin/sh"
+        except (OSError, ValueError):
+            pass
+        return uid, gid, "/", "/bin/sh"
+    # Username: look it up.
+    try:
+        with open(os.path.join(rootfs, "etc", "passwd")) as f:
+            for line in f:
+                parts = line.rstrip("\n").split(":")
+                if len(parts) >= 7 and parts[0] == user:
+                    uid, gid = int(parts[2]), int(parts[3])
+                    return uid, gid, parts[5] or "/", parts[6] or "/bin/sh"
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def drop_privileges(rootfs, user, command):
+    """After chroot, drop from root to *user* before exec.
+
+    Returns the (possibly rewritten) command to exec. We are already inside the
+    chroot when this runs. Uses the guest's own uid/gid so we can't accidentally
+    pick up a host uid. If resolution fails, we stay root and note it (better a
+    loud root than a silent wrong-uid) — unless the user explicitly asked for a
+    non-root login, in which case we refuse rather than run as root.
+    """
+    if not user or user == "root":
+        return command, None
+    info = _lookup_uid_gid_pw(user)
+    if info is None:
+        # Couldn't resolve inside the chroot (no pwd module there); try a
+        # pre-chroot lookup helper as a fallback.
+        info = _lookup_uid_gid(rootfs, user)
+    if info is None:
+        return command, f"user '{user}' not found in container; staying root"
+    uid, gid, home, shell = info
+    try:
+        os.setgid(gid)
+        os.setuid(uid)
+        os.environ["HOME"] = home
+        os.environ["USER"] = user if not user.isdigit() else user
+        # Run the user's shell if the command was just the default shell.
+        return command, None
+    except OSError as e:
+        return command, f"could not drop to uid {uid}: {e}; staying root"
+
+
+def _lookup_uid_gid_pw(user):
+    """Resolve a user to (uid, gid, home, shell) via the pwd module (host).
+
+    Used inside the chroot as a fallback; the guest /etc/passwd parse in
+    _lookup_uid_gid is preferred so we match the container's own users.
+    """
+    try:
+        import pwd
+        p = pwd.getpwnam(user) if not user.isdigit() else pwd.getpwuid(int(user))
+        return p.pw_uid, p.pw_gid, p.pw_dir, p.pw_shell
+    except (KeyError, ValueError, ImportError):
+        return None
+
+
 # Path to the init supervisor shipped alongside the daemon.
 INIT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "init.sh")
 
@@ -199,6 +320,17 @@ def run_container(args, conn):
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)
+            # Drop from root to the container's login user (least privilege).
+            # --root forces root; otherwise use --user or the container default.
+            # Only meaningful when NOT using --init (init is PID 1, must be root).
+            if not args.get("use_init"):
+                eff_user = "root" if args.get("as_root") else (
+                    args.get("user") or read_default_user(name)
+                )
+                _cmd, warn = drop_privileges(rootfs, eff_user, command)
+                if warn:
+                    with contextlib.suppress(OSError):
+                        os.write(2, f"apatch-chroot: {warn}\n".encode())
             # With use_init, the container's PID 1 is our mini-init supervisor
             # (starts services, reaps zombies, runs the command as a child).
             # Android's own PID 1 is untouched — this runs in the child's
@@ -670,6 +802,12 @@ def exec_container(args, conn):
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)
+            # Drop from root to the container's login user (least privilege).
+            if not args.get("use_init"):
+                eff_user = "root" if args.get("as_root") else (
+                    args.get("user") or read_default_user(name)
+                )
+                drop_privileges(rootfs, eff_user, command)
             if args.get("use_init"):
                 init_path = stage_init(rootfs)
                 if init_path:

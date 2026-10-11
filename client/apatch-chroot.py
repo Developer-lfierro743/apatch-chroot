@@ -283,10 +283,10 @@ def cmd_kill(name):
     return 1
 
 
-def cmd_exec(name, command, use_init=False, use_box64=False):
+def cmd_exec(name, command, use_init=False, use_box64=False, user=None, as_root=False):
     """Run a command non-interactively; print its output and exit code."""
     s = connect()
-    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64}})
+    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root}})
     resp = read_control_line(s)
     s.close()
     if not resp or not resp.get("ok"):
@@ -367,9 +367,23 @@ def cmd_service(name, verb, unit=None):
     return data.get("exit", 0)
 
 
-def cmd_run(name, command, use_init=False, use_box64=False):
+def cmd_setuser(name, user):
+    """Set a container's default login user ('' or 'root' restores root)."""
     s = connect()
-    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64}})
+    request(s, {"cmd": "setuser", "args": {"name": name, "user": user}})
+    resp = read_control_line(s)
+    s.close()
+    if resp and resp.get("ok"):
+        d = resp["data"].get("user") or "root"
+        print(f"container '{name}' will now log in as '{d}' by default")
+        return 0
+    print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+    return 1
+
+
+def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False):
+    s = connect()
+    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root}})
     import termios
     import tty
 
@@ -482,13 +496,32 @@ def main(argv):
         rest = args[2:]
         use_init = "--init" in rest
         use_box64 = "--box64" in rest
-        rest = [a for a in rest if a not in ("--init", "--box64")]
+        as_root = "--root" in rest
+        user = None
+        if "--user" in rest:
+            i = rest.index("--user")
+            if i + 1 < len(rest):
+                user = rest[i + 1]
+        # Strip our flags (and --user's value) from the command.
+        clean = []
+        skip_next = False
+        for a in rest:
+            if skip_next:
+                skip_next = False
+                continue
+            if a == "--user":
+                skip_next = True
+                continue
+            if a in ("--init", "--box64", "--root"):
+                continue
+            clean.append(a)
+        rest = clean
         if rest and rest[0] == "--":
             rest = rest[1:]
         if not rest:
-            print("usage: apatch-chroot exec NAME -- CMD [ARG...]", file=sys.stderr)
+            print("usage: apatch-chroot exec NAME [--user U] [--root] -- CMD [ARG...]", file=sys.stderr)
             return 2
-        return cmd_exec(name, rest, use_init=use_init, use_box64=use_box64)
+        return cmd_exec(name, rest, use_init=use_init, use_box64=use_box64, user=user, as_root=as_root)
     if cmd == "clone":
         if len(args) < 3:
             print("usage: apatch-chroot clone SRC DST", file=sys.stderr)
@@ -511,19 +544,45 @@ def main(argv):
             return 2
         unit = args[3] if len(args) > 3 else None
         return cmd_service(args[1], args[2], unit)
+    if cmd == "setuser":
+        if len(args) < 2:
+            print("usage: apatch-chroot setuser NAME [USER]", file=sys.stderr)
+            print("  apatch-chroot setuser ubuntu luis     # log in as 'luis' by default")
+            print("  apatch-chroot setuser ubuntu root     # back to root")
+            return 2
+        user = args[2] if len(args) > 2 else "root"
+        return cmd_setuser(args[1], user)
     if cmd == "run":
         if len(args) < 2:
-            print("usage: apatch-chroot run <name> [--init] [--box64] [-- CMD...]", file=sys.stderr)
+            print("usage: apatch-chroot run <name> [--init] [--box64] [--user U] [--root] [-- CMD...]", file=sys.stderr)
             return 2
         name = args[1]
         rest = args[2:]
         use_init = "--init" in rest
         use_box64 = "--box64" in rest
-        rest = [a for a in rest if a not in ("--init", "--box64")]
+        as_root = "--root" in rest
+        user = None
+        if "--user" in rest:
+            i = rest.index("--user")
+            if i + 1 < len(rest):
+                user = rest[i + 1]
+        clean = []
+        skip_next = False
+        for a in rest:
+            if skip_next:
+                skip_next = False
+                continue
+            if a == "--user":
+                skip_next = True
+                continue
+            if a in ("--init", "--box64", "--root"):
+                continue
+            clean.append(a)
+        rest = clean
         if rest and rest[0] == "--":
             rest = rest[1:]
         command = rest or ["/bin/bash"]
-        return cmd_run(name, command, use_init=use_init, use_box64=use_box64)
+        return cmd_run(name, command, use_init=use_init, use_box64=use_box64, user=user, as_root=as_root)
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 
