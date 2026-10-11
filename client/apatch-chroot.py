@@ -283,6 +283,59 @@ def cmd_kill(name):
     return 1
 
 
+def cmd_exec(name, command):
+    """Run a command non-interactively; print its output and exit code."""
+    s = connect()
+    request(s, {"cmd": "exec", "args": {"name": name, "command": command}})
+    resp = read_control_line(s)
+    s.close()
+    if not resp or not resp.get("ok"):
+        print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+        return 1
+    data = resp["data"]
+    if data.get("stdout"):
+        sys.stdout.write(data["stdout"])
+    if data.get("stderr"):
+        sys.stderr.write(data["stderr"])
+    return data.get("exit", 0)
+
+
+def cmd_clone(src, dst):
+    s = connect()
+    request(s, {"cmd": "clone", "args": {"src": src, "dst": dst}})
+    resp = read_control_line(s)
+    s.close()
+    if resp and resp.get("ok"):
+        print(f"cloned '{src}' -> '{resp['data']['cloned']}' ({resp['data']['entries']} entries)")
+        return 0
+    print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+    return 1
+
+
+def cmd_push(name, src, dest):
+    s = connect()
+    request(s, {"cmd": "push", "args": {"name": name, "src": src, "dest": dest}})
+    resp = read_control_line(s)
+    s.close()
+    if resp and resp.get("ok"):
+        print(f"pushed {resp['data']['copied']} entrie(s) into '{name}:{resp['data']['to']}'")
+        return 0
+    print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+    return 1
+
+
+def cmd_pull(name, src, dest):
+    s = connect()
+    request(s, {"cmd": "pull", "args": {"name": name, "src": src, "dest": dest}})
+    resp = read_control_line(s)
+    s.close()
+    if resp and resp.get("ok"):
+        print(f"pulled {resp['data']['copied']} entrie(s) to {resp['data']['to']}")
+        return 0
+    print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+    return 1
+
+
 def cmd_run(name, command):
     s = connect()
     request(s, {"cmd": "run", "args": {"name": name, "command": command}})
@@ -390,6 +443,33 @@ def main(argv):
             print("usage: apatch-chroot kill NAME", file=sys.stderr)
             return 2
         return cmd_kill(args[1])
+    if cmd == "exec":
+        if len(args) < 3:
+            print("usage: apatch-chroot exec NAME -- CMD [ARG...]", file=sys.stderr)
+            return 2
+        name = args[1]
+        rest = args[2:]
+        if rest and rest[0] == "--":
+            rest = rest[1:]
+        if not rest:
+            print("usage: apatch-chroot exec NAME -- CMD [ARG...]", file=sys.stderr)
+            return 2
+        return cmd_exec(name, rest)
+    if cmd == "clone":
+        if len(args) < 3:
+            print("usage: apatch-chroot clone SRC DST", file=sys.stderr)
+            return 2
+        return cmd_clone(args[1], args[2])
+    if cmd == "push":
+        if len(args) < 4:
+            print("usage: apatch-chroot push NAME HOST_SRC CONTAINER_DEST", file=sys.stderr)
+            return 2
+        return cmd_push(args[1], args[2], args[3])
+    if cmd == "pull":
+        if len(args) < 4:
+            print("usage: apatch-chroot pull NAME CONTAINER_SRC HOST_DEST", file=sys.stderr)
+            return 2
+        return cmd_pull(args[1], args[2], args[3])
     if cmd == "run":
         if len(args) < 2:
             print("usage: apatch-chroot run <name> [-- CMD...]", file=sys.stderr)

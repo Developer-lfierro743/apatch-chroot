@@ -517,3 +517,213 @@ def _copy_tree(src, dst, progress):
         if count and count % 2000 == 0:
             progress("copy", f"{count} entries")
     return count
+
+
+# ---------------------------------------------------------------------------
+# exec: non-interactive command, output captured (no PTY)
+# ---------------------------------------------------------------------------
+
+def exec_container(args, conn):
+    """Run a command in a container WITHOUT a PTY; capture stdout/stderr.
+
+    args: {"name", "command": [...], "cwd": optional}
+
+    Unlike `run` (interactive PTY relay), this forks with pipes, chroots,
+    runs the command to completion, and returns {exit, stdout, stderr} as one
+    control frame. Built for scripting: `exec ubuntu -- apt list --installed`.
+    """
+    import json
+
+    name = args.get("name")
+    command = args.get("command") or []
+    if not name or not command:
+        return {"ok": False, "error": "exec requires a name and a command"}
+
+    rootfs = os.path.join(CONTAINERS_DIR, name, "rootfs")
+    if not os.path.isdir(rootfs):
+        return {"ok": False, "error": f"no such container: {name}"}
+    cwd = args.get("cwd") or "/"
+
+    out_r, out_w = os.pipe()
+    err_r, err_w = os.pipe()
+
+    pid = os.fork()
+    if pid == 0:
+        # Child: chroot + exec with stdout/stderr on the pipes.
+        try:
+            os.close(out_r)
+            os.close(err_r)
+            os.dup2(out_w, 1)
+            os.dup2(err_w, 2)
+            if out_w > 2:
+                os.close(out_w)
+            if err_w > 2:
+                os.close(err_w)
+            # Private mount namespace + pseudo-fs, same as run (best-effort).
+            try:
+                import mounts as mounts_mod
+                mounts_mod.enter_private_mount_ns()
+                mounts_mod.setup_mounts(rootfs)
+            except OSError:
+                pass
+            ensure_resolv_conf(rootfs)
+            os.chroot(rootfs)
+            os.chdir(cwd)
+            os.execvpe(command[0], command, _guest_env())
+        except Exception as e:
+            with contextlib.suppress(OSError):
+                os.write(2, f"exec failed: {e}\n".encode())
+            os._exit(127)
+
+    os.close(out_w)
+    os.close(err_w)
+
+    # Read both pipes to EOF, then reap.
+    out_chunks, err_chunks = [], []
+    fds = [out_r, err_r]
+    while fds:
+        readable, _, _ = select.select(fds, [], [], 5.0)
+        if not readable:
+            break
+        for fd in readable:
+            chunk = os.read(fd, MAX)
+            if not chunk:
+                fds.remove(fd)
+                os.close(fd)
+                continue
+            (out_chunks if fd == out_r else err_chunks).append(chunk)
+
+    _, status = os.waitpid(pid, 0)
+    exit_code = os.waitstatus_to_exitcode(status)
+
+    return {
+        "ok": True,
+        "data": {
+            "exit": exit_code,
+            "stdout": b"".join(out_chunks).decode("utf-8", "replace"),
+            "stderr": b"".join(err_chunks).decode("utf-8", "replace"),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# clone: copy a container (snapshot before risky changes)
+# ---------------------------------------------------------------------------
+
+def clone_container(args):
+    """Copy container SRC to DST (a full rootfs snapshot).
+
+    args: {"src", "dst"}. DST must not already exist. Copies the rootfs and
+    the image/arch metadata, so the clone 'list's identically to the source.
+    """
+    src = args.get("src")
+    dst = args.get("dst")
+    if not src or not dst:
+        return {"ok": False, "error": "clone requires src and dst"}
+    src_dir = os.path.join(CONTAINERS_DIR, src)
+    dst_dir = os.path.join(CONTAINERS_DIR, dst)
+    if not os.path.isdir(os.path.join(src_dir, "rootfs")):
+        return {"ok": False, "error": f"no such container: {src}"}
+    if os.path.exists(dst_dir):
+        return {"ok": False, "error": f"destination already exists: {dst}"}
+
+    os.makedirs(dst_dir, exist_ok=False)
+    dst_rootfs = os.path.join(dst_dir, "rootfs")
+    count = _copy_tree(os.path.join(src_dir, "rootfs"), dst_rootfs, lambda *a: None)
+
+    # Carry over metadata so the clone lists with the same source image.
+    for meta in ("image", "arch"):
+        sp = os.path.join(src_dir, meta)
+        if os.path.isfile(sp):
+            with contextlib.suppress(OSError):
+                shutil.copy2(sp, os.path.join(dst_dir, meta))
+
+    return {"ok": True, "data": {"cloned": dst, "entries": count}}
+
+
+# ---------------------------------------------------------------------------
+# push / pull: copy files between the host and a container without login
+# ---------------------------------------------------------------------------
+
+def _resolve_container_path(name, path):
+    """Map a path to the container's rootfs, refusing escapes.
+
+    'path' is absolute inside the container (e.g. /root/backup.tar). Returns
+    the real host path under the rootfs, or None if it escapes.
+    """
+    rootfs = os.path.realpath(os.path.join(CONTAINERS_DIR, name, "rootfs"))
+    # Normalize the container path (absolute, no ..).
+    p = os.path.normpath("/" + path.lstrip("/"))
+    full = os.path.realpath(os.path.join(rootfs, p.lstrip("/")))
+    if full != rootfs and not full.startswith(rootfs + os.sep):
+        return None
+    return full
+
+
+def copy_into_container(args):
+    """Copy a HOST path INTO a container (push).
+
+    args: {"name", "src" (host path), "dest" (container path)}.
+    The daemon runs as root so it can read any host path and write into the
+    rootfs. dest is a container-absolute path; if it ends with '/' or is an
+    existing dir, src is copied inside it under its own name.
+    """
+    name = args.get("name")
+    src = args.get("src")
+    dest = args.get("dest")
+    if not (name and src and dest):
+        return {"ok": False, "error": "push requires name, src and dest"}
+    if not os.path.exists(src):
+        return {"ok": False, "error": f"host path not found: {src}"}
+
+    target = _resolve_container_path(name, dest)
+    if target is None:
+        return {"ok": False, "error": "dest escapes the container rootfs"}
+
+    # If dest looks like a directory (trailing slash or existing dir), place
+    # the source inside it under its own basename.
+    if dest.endswith("/") or os.path.isdir(target):
+        target = os.path.join(target, os.path.basename(src.rstrip("/")))
+
+    try:
+        if os.path.isdir(src):
+            os.makedirs(target, exist_ok=True)
+            n = _copy_tree(src, target, lambda *a: None)
+        else:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy2(src, target, follow_symlinks=False)
+            n = 1
+    except OSError as e:
+        return {"ok": False, "error": f"copy failed: {e}"}
+    return {"ok": True, "data": {"copied": n, "to": dest}}
+
+
+def copy_from_container(args):
+    """Copy a path OUT of a container to the host (pull).
+
+    args: {"name", "src" (container path), "dest" (host path)}.
+    """
+    name = args.get("name")
+    src = args.get("src")
+    dest = args.get("dest")
+    if not (name and src and dest):
+        return {"ok": False, "error": "pull requires name, src and dest"}
+
+    csrc = _resolve_container_path(name, src)
+    if csrc is None or not os.path.exists(csrc):
+        return {"ok": False, "error": f"container path not found: {src}"}
+
+    if dest.endswith("/") or os.path.isdir(dest):
+        dest = os.path.join(dest, os.path.basename(src.rstrip("/")))
+
+    try:
+        if os.path.isdir(csrc):
+            os.makedirs(dest, exist_ok=True)
+            n = _copy_tree(csrc, dest, lambda *a: None)
+        else:
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+            shutil.copy2(csrc, dest, follow_symlinks=False)
+            n = 1
+    except OSError as e:
+        return {"ok": False, "error": f"copy failed: {e}"}
+    return {"ok": True, "data": {"copied": n, "to": dest}}

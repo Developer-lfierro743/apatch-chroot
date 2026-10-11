@@ -69,6 +69,18 @@ def handle_request(req, conn):
     if cmd == "kill":
         from daemon_cmds import kill_container
         return kill_container(req.get("args", {}))
+    if cmd == "exec":
+        from daemon_cmds import exec_container
+        return exec_container(req.get("args", {}), conn)
+    if cmd == "clone":
+        from daemon_cmds import clone_container
+        return clone_container(req.get("args", {}))
+    if cmd == "push":
+        from daemon_cmds import copy_into_container
+        return copy_into_container(req.get("args", {}))
+    if cmd == "pull":
+        from daemon_cmds import copy_from_container
+        return copy_from_container(req.get("args", {}))
     if cmd == "shutdown":
         return {"ok": True, "data": {"bye": True}, "_shutdown": True}
     return {"ok": False, "error": f"unknown cmd: {cmd}"}

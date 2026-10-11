@@ -20,8 +20,12 @@ TOP_COMMANDS = (
     ("install", "Pull an image from a registry and install it as a container."),
     ("convert", "Import an existing chroot-distro container.", "must be unmounted first (kill or reboot)"),
     ("run", "Run a command in a container (non-interactive or one-shot)."),
+    ("exec", "Run a command and capture its output (scripting)."),
     ("login", "Open an interactive shell inside a container."),
     ("list", "List installed containers."),
+    ("clone", "Copy a container (snapshot before risky changes)."),
+    ("push", "Copy a host file/dir into a container."),
+    ("pull", "Copy a file/dir out of a container to the host."),
     ("kill", "Stop a container and tear down its mounts."),
     ("remove", "Delete a container and its rootfs.", "!deletes all data — no undo"),
     ("info", "Show daemon and host capability status."),
@@ -135,6 +139,72 @@ HELP_PAGES = {
         ),
         "options": [("-h, --help", "Show this help.")],
         "examples": ["apatch-chroot kill ubuntu"],
+    },
+    "exec": {
+        "usage": "exec NAME -- CMD [ARG...]",
+        "summary": (
+            "Run a command inside a container and capture its output.\n\n"
+            "Unlike 'run' (an interactive PTY session), exec is non-interactive: "
+            "it runs the command to completion and prints stdout/stderr, then "
+            "exits with the command's exit code. Built for scripting and "
+            "one-off checks.\n\n"
+            "Everything after '--' is the command. The exit code of exec is the "
+            "command's exit code, so it composes in shell pipelines."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": [
+            "apatch-chroot exec ubuntu -- cat /etc/os-release",
+            "apatch-chroot exec ubuntu -- apt list --installed",
+            "apatch-chroot exec alpine -- sh -c 'uname -a && nproc'",
+        ],
+    },
+    "clone": {
+        "usage": "clone SRC DST",
+        "summary": (
+            "Copy a container to a new one — a full rootfs snapshot.\n\n"
+            "DST must not already exist. The entire rootfs is copied, along with "
+            "the source image/arch metadata, so the clone 'list's identically to "
+            "the source. Use it to snapshot before a risky change (a big apt "
+            "upgrade, an experiment) so you can roll back by removing the clone "
+            "or swapping names.\n\n"
+            "This copies every file, so it uses as much disk as the source."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": [
+            "apatch-chroot clone ubuntu ubuntu-backup",
+            "apatch-chroot clone ubuntu ubuntu-pre-upgrade",
+        ],
+    },
+    "push": {
+        "usage": "push NAME HOST_SRC CONTAINER_DEST",
+        "summary": (
+            "Copy a host file or directory INTO a container, no login needed.\n\n"
+            "HOST_SRC is a path on the Android/Termux side; CONTAINER_DEST is an "
+            "absolute path inside the container. If CONTAINER_DEST ends in '/' or "
+            "is an existing directory, HOST_SRC is copied inside it under its own "
+            "name. The daemon runs as root, so it can read any host path.\n\n"
+            "Paths cannot escape the container rootfs."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": [
+            "apatch-chroot push ubuntu ~/backup.tar /root/",
+            "apatch-chroot push ubuntu ./myscript.sh /usr/local/bin/",
+        ],
+    },
+    "pull": {
+        "usage": "pull NAME CONTAINER_SRC HOST_DEST",
+        "summary": (
+            "Copy a file or directory OUT of a container to the host.\n\n"
+            "CONTAINER_SRC is an absolute path inside the container; HOST_DEST is "
+            "a path on the Android/Termux side. If HOST_DEST ends in '/' or is an "
+            "existing directory, the item is copied inside it under its own name. "
+            "The reverse of 'push'."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": [
+            "apatch-chroot pull ubuntu /root/backup.tar ~/",
+            "apatch-chroot pull ubuntu /var/log/ ./logs/",
+        ],
     },
     "remove": {
         "usage": "remove NAME",
