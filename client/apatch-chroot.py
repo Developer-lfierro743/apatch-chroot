@@ -28,7 +28,7 @@ SOCKET_FALLBACKS = (
     "/data/local/tmp/apatch-chroot.sock",
     "/dev/apatch-chroot.sock",
 )
-VERSION = "v0.3.0"
+VERSION = "v0.4.0"
 PROGRAM = "apatch-chroot"
 # Where check-update looks for the latest release.
 GITHUB_REPO = "Developer-lfierro743/apatch-chroot"
