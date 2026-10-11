@@ -19,11 +19,13 @@ import time
 from pages import HELP_PAGES, TOP_COMMANDS, FRONT_NOTES
 from render import render_front, render_page, term_width
 
-SOCKET_PATH = "/data/local/tmp/apatch-chroot.sock"
-# Older installs left the socket in Termux app storage or /dev; try them too
-# so a stale client still finds the daemon after an upgrade.
+SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot-broker.sock"
+# The broker runs as the Termux uid and owns this app_data_file socket, which
+# the untrusted_app (this CLI) CAN reach. The root core dials the broker; we
+# never touch the core's root socket directly (SELinux denies that). See
+# broker.py. Older installs used these; kept as fallbacks.
 SOCKET_FALLBACKS = (
-    "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock",
+    "/data/local/tmp/apatch-chroot.sock",
     "/dev/apatch-chroot.sock",
 )
 VERSION = "v0.1.1"
@@ -41,6 +43,7 @@ def connect(wait: bool = True, timeout: float = 20.0):
     """
     deadline = time.monotonic() + (timeout if wait else 0)
     last = None
+    _spawned_broker = False
     while True:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         for path in (SOCKET_PATH, *SOCKET_FALLBACKS):
@@ -50,10 +53,48 @@ def connect(wait: bool = True, timeout: float = 20.0):
             except OSError as e:
                 last = e
         s.close()
+        # The broker runs as the Termux uid (that's the whole point — it owns an
+        # app_data_file socket we can reach). If it isn't up, start it once,
+        # then keep waiting for it to come ready.
+        if not _spawned_broker:
+            _spawned_broker = True
+            _start_broker()
         if time.monotonic() >= deadline:
             break
         time.sleep(1.0)
     raise DaemonNotReady(last)
+
+
+def _start_broker():
+    """Spawn the broker (Termux-uid relay) detached, if not already running."""
+    import subprocess
+
+    broker = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "broker.py"
+    )
+    broker = os.path.normpath(broker)
+    if not os.path.exists(broker):
+        # Installed layout: broker sits beside the client in the module/lib dir.
+        for cand in (
+            "/data/adb/modules/apatch_chroot/daemon/broker.py",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "broker.py"),
+        ):
+            if os.path.exists(cand):
+                broker = cand
+                break
+    if not os.path.exists(broker):
+        return
+    # Don't stack brokers: skip if one already holds the socket path's process.
+    try:
+        subprocess.Popen(
+            [sys.executable, broker],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
 
 
 class DaemonNotReady(Exception):

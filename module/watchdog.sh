@@ -35,11 +35,11 @@ echo $$ > "$LOCKDIR/pid"
 
 while true; do
     if [ -x "$PYTHON" ]; then
-        # Keep the client in sync with the flashed module on every boot. The
-        # module dir is system_file context (app can't read it), so the daemon
-        # (root) copies the current client into Termux's app-readable lib. This
-        # fixes the "flashed v0.1.1 but client still v0.1.0" drift: customize.sh
-        # only runs at install time, so a stale client survived reflashes.
+        # Keep the client + broker in sync with the flashed module on every
+        # boot. The module dir is system_file context (app can't read it), so
+        # the daemon (root) copies them into Termux's app-readable lib. The
+        # broker MUST be app-readable because the CLI (Termux uid) spawns it.
+        # This also fixes client drift across reflashes.
         CLIENT_SRC=$MODDIR/client
         CLIENT_DST=/data/data/com.termux/files/usr/lib/apatch-chroot
         if [ -d "$CLIENT_SRC" ]; then
@@ -49,11 +49,16 @@ while true; do
             done
             chmod 644 "$CLIENT_DST/"*.py 2>/dev/null
         fi
+        # The broker lives in the daemon dir; copy it beside the client so the
+        # CLI's _start_broker() finds it in app-readable space.
+        if [ -f "$DAEMON_DIR/broker.py" ]; then
+            cp -f "$DAEMON_DIR/broker.py" "$CLIENT_DST/broker.py" 2>/dev/null
+            chmod 644 "$CLIENT_DST/broker.py" 2>/dev/null
+        fi
 
         # pgrep -f matches the daemon cmdline; this watchdog's cmdline is
         # "sh .../watchdog.sh" and does not contain daemon.py, so no self-match.
         if ! pgrep -f "$DAEMON" >/dev/null 2>&1; then
-            rm -f "$SOCK" 2>/dev/null
             echo "[watchdog] starting daemon $(date)" >> "$LOG"
             setsid "$PYTHON" "$DAEMON" >> "$LOG" 2>&1 &
         fi

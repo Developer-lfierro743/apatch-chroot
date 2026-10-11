@@ -19,9 +19,14 @@ import os
 import socket
 import sys
 import threading
+import time
 
 SOCKET_PATH = "/data/local/tmp/apatch-chroot.sock"
 CONTAINERS_DIR = "/data/apatch-chroot/containers"
+# The broker (Termux-uid relay) exposes this socket for the core to dial.
+# app_data_file context: root CAN connect here, the CLI cannot reach a root
+# socket, so this is the bridge. See broker.py for the full SELinux rationale.
+BROKER_CORE_SOCKET = "/data/data/com.termux/files/usr/tmp/apatch-chroot-core.sock"
 
 
 def _recv_line(conn):
@@ -94,25 +99,49 @@ def serve(conn):
 
 def main():
     os.makedirs(CONTAINERS_DIR, exist_ok=True)
-    # The socket lives under Termux's own tree so the untrusted_app can reach
-    # it (a socket in /dev gets a device:s0 context SELinux forbids the app).
-    os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
-    try:
-        os.unlink(SOCKET_PATH)
-    except OSError:
-        pass
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(SOCKET_PATH)
-    # /data/local/tmp is shell_data_file context, which the untrusted_app
-    # (real Termux) can reach — unlike app-private storage reached only via
-    # the magisk su domain. 0666 lets the app connect; no chown needed here
-    # (chown-to-app-uid was only for the old app-private socket location).
-    os.chmod(SOCKET_PATH, 0o666)
-    srv.listen(8)
-    print(f"apatch-chroot daemon listening on {SOCKET_PATH} (uid={os.getuid()})", flush=True)
+
+    # SELinux reality: the CLI (untrusted_app) cannot connect to a root-owned
+    # socket. So we do NOT listen on our own socket. Instead we DIAL the broker
+    # (which runs as the Termux uid, app_data_file — root CAN connect there) and
+    # register ready relay connections. The broker pairs each CLI request with
+    # one of our connections and pipes bytes; our serve() logic is unchanged.
+    print(
+        f"apatch-chroot core starting; dialing broker at {BROKER_CORE_SOCKET} (uid={os.getuid()})",
+        flush=True,
+    )
+
+    def register_relay():
+        """Keep a pool of connections to the broker ready to serve requests."""
+        while True:
+            try:
+                conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                conn.connect(BROKER_CORE_SOCKET)
+            except OSError as e:
+                # Broker not up yet (Termux not started, or booting). Retry.
+                print(f"broker not reachable ({e}); retrying in 3s", flush=True)
+                time.sleep(3)
+                continue
+            # Hand this connection to serve() — it blocks until the broker
+            # pipes a CLI request through it, then loops for the next.
+            try:
+                serve(conn)
+            except OSError:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+            # serve() returned (broker closed the relay); open a fresh one.
+            time.sleep(0.2)
+
+    # A small pool so a couple of concurrent CLI calls don't serialize.
+    for _ in range(4):
+        threading.Thread(target=register_relay, daemon=True).start()
+
+    # Block forever; the relay threads do the work.
     while True:
-        conn, _ = srv.accept()
-        threading.Thread(target=serve, args=(conn,), daemon=True).start()
+        time.sleep(3600)
 
 
 if __name__ == "__main__":
