@@ -288,10 +288,10 @@ def cmd_kill(name):
     return 1
 
 
-def cmd_exec(name, command, use_init=False, use_box64=False, user=None, as_root=False):
+def cmd_exec(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False):
     """Run a command non-interactively; print its output and exit code."""
     s = connect()
-    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root}})
+    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display}})
     resp = read_control_line(s)
     s.close()
     if not resp or not resp.get("ok"):
@@ -386,9 +386,9 @@ def cmd_setuser(name, user):
     return 1
 
 
-def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False):
+def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False):
     s = connect()
-    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root}})
+    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display}})
     import termios
     import tty
 
@@ -455,6 +455,50 @@ class _suppress:
         return True
 
 
+# Flags shared by run/login/exec. Boolean flags have no value; --user takes one.
+_BOOL_FLAGS = ("--init", "--box64", "--root", "--shared-display", "--shared-x11")
+_VALUE_FLAGS = ("--user",)
+
+
+def parse_session_flags(rest):
+    """Split CLI flags from the command for run/login/exec.
+
+    Returns (opts, command) where opts is a dict of the recognized flags and
+    command is the remaining positional args (the command to run). --shared-x11
+    is an alias for --shared-display.
+    """
+    opts = {
+        "use_init": False,
+        "use_box64": False,
+        "as_root": False,
+        "shared_display": False,
+        "user": None,
+    }
+    cmd = []
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a in ("--shared-display", "--shared-x11"):
+            opts["shared_display"] = True
+        elif a == "--init":
+            opts["use_init"] = True
+        elif a == "--box64":
+            opts["use_box64"] = True
+        elif a == "--root":
+            opts["as_root"] = True
+        elif a == "--user":
+            if i + 1 < len(rest):
+                opts["user"] = rest[i + 1]
+                i += 1
+        else:
+            cmd.append(a)
+        i += 1
+    # Drop a leading '--' separator.
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    return opts, cmd
+
+
 def main(argv):
     # Help interception: --help / -h / no command, before any dispatch.
     args = argv[1:]
@@ -499,38 +543,14 @@ def main(argv):
         return cmd_kill(args[1])
     if cmd == "exec":
         if len(args) < 3:
-            print("usage: apatch-chroot exec NAME -- CMD [ARG...]", file=sys.stderr)
+            print("usage: apatch-chroot exec NAME [flags] -- CMD [ARG...]", file=sys.stderr)
             return 2
         name = args[1]
-        rest = args[2:]
-        use_init = "--init" in rest
-        use_box64 = "--box64" in rest
-        as_root = "--root" in rest
-        user = None
-        if "--user" in rest:
-            i = rest.index("--user")
-            if i + 1 < len(rest):
-                user = rest[i + 1]
-        # Strip our flags (and --user's value) from the command.
-        clean = []
-        skip_next = False
-        for a in rest:
-            if skip_next:
-                skip_next = False
-                continue
-            if a == "--user":
-                skip_next = True
-                continue
-            if a in ("--init", "--box64", "--root"):
-                continue
-            clean.append(a)
-        rest = clean
-        if rest and rest[0] == "--":
-            rest = rest[1:]
-        if not rest:
-            print("usage: apatch-chroot exec NAME [--user U] [--root] -- CMD [ARG...]", file=sys.stderr)
+        opts, command = parse_session_flags(args[2:])
+        if not command:
+            print("usage: apatch-chroot exec NAME [flags] -- CMD [ARG...]", file=sys.stderr)
             return 2
-        return cmd_exec(name, rest, use_init=use_init, use_box64=use_box64, user=user, as_root=as_root)
+        return cmd_exec(name, command, **opts)
     if cmd == "clone":
         if len(args) < 3:
             print("usage: apatch-chroot clone SRC DST", file=sys.stderr)
@@ -563,51 +583,22 @@ def main(argv):
         return cmd_setuser(args[1], user)
     if cmd == "run":
         if len(args) < 2:
-            print("usage: apatch-chroot run <name> [--init] [--box64] [--user U] [--root] [-- CMD...]", file=sys.stderr)
+            print("usage: apatch-chroot run <name> [flags] [-- CMD...]", file=sys.stderr)
+            print("  flags: --init --box64 --shared-display(--shared-x11) --user U --root", file=sys.stderr)
             return 2
         name = args[1]
-        rest = args[2:]
-        use_init = "--init" in rest
-        use_box64 = "--box64" in rest
-        as_root = "--root" in rest
-        user = None
-        if "--user" in rest:
-            i = rest.index("--user")
-            if i + 1 < len(rest):
-                user = rest[i + 1]
-        clean = []
-        skip_next = False
-        for a in rest:
-            if skip_next:
-                skip_next = False
-                continue
-            if a == "--user":
-                skip_next = True
-                continue
-            if a in ("--init", "--box64", "--root"):
-                continue
-            clean.append(a)
-        rest = clean
-        if rest and rest[0] == "--":
-            rest = rest[1:]
-        command = rest or ["/bin/bash"]
-        return cmd_run(name, command, use_init=use_init, use_box64=use_box64, user=user, as_root=as_root)
+        opts, command = parse_session_flags(args[2:])
+        command = command or ["/bin/bash"]
+        return cmd_run(name, command, **opts)
     if cmd == "login":
         if len(args) < 2:
-            print("usage: apatch-chroot login <name> [--init] [--box64] [--user U] [--root]", file=sys.stderr)
+            print("usage: apatch-chroot login <name> [flags]", file=sys.stderr)
+            print("  flags: --init --box64 --shared-display(--shared-x11) --user U --root", file=sys.stderr)
             return 2
         name = args[1]
-        rest = args[2:]
-        use_init = "--init" in rest
-        use_box64 = "--box64" in rest
-        as_root = "--root" in rest
-        user = None
-        if "--user" in rest:
-            i = rest.index("--user")
-            if i + 1 < len(rest):
-                user = rest[i + 1]
+        opts, _command = parse_session_flags(args[2:])
         # login is just run with an interactive shell.
-        return cmd_run(name, ["/bin/bash"], use_init=use_init, use_box64=use_box64, user=user, as_root=as_root)
+        return cmd_run(name, ["/bin/bash"], **opts)
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 

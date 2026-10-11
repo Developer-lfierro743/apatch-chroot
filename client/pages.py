@@ -97,12 +97,17 @@ HELP_PAGES = {
         ),
         "options": [
             ("-h, --help", "Show this help."),
-            ("--cwd [DIR]", "Working directory inside the container (default: /)."),
+            ("--init", "Start the container's service manager (mini-systemd)."),
+            ("--box64", "Enable x86_64 emulation (needs box64 in the container)."),
+            ("--shared-display", "Share termux-x11 display (alias: --shared-x11)."),
+            ("--user [NAME]", "Log in as this user instead of the default."),
+            ("--root", "Force root even if a default user is set."),
         ],
         "examples": [
             "apatch-chroot run ubuntu -- /bin/bash",
-            "apatch-chroot run ubuntu -- id",
-            "apatch-chroot run alpine -- sh -c 'echo hi && uname -a'",
+            "apatch-chroot run ubuntu --init -- /bin/bash",
+            "apatch-chroot run ubuntu --shared-display -- xterm",
+            "apatch-chroot run ubuntu --box64 -- ./x86_64-app",
         ],
     },
     "login": {
@@ -118,10 +123,16 @@ HELP_PAGES = {
         ),
         "options": [
             ("-h, --help", "Show this help."),
-            ("--user [NAME]", "Log in as this user instead of root."),
+            ("--init", "Start the container's service manager (mini-systemd)."),
+            ("--box64", "Enable x86_64 emulation (needs box64 in the container)."),
+            ("--shared-display", "Share termux-x11 display (alias: --shared-x11)."),
+            ("--user [NAME]", "Log in as this user instead of the default."),
+            ("--root", "Force root even if a default user is set."),
         ],
         "examples": [
             "apatch-chroot login ubuntu",
+            "apatch-chroot login ubuntu --init",
+            "apatch-chroot login ubuntu --shared-display",
         ],
     },
     "list": {
@@ -143,7 +154,7 @@ HELP_PAGES = {
         "examples": ["apatch-chroot kill ubuntu"],
     },
     "exec": {
-        "usage": "exec NAME -- CMD [ARG...]",
+        "usage": "exec [OPTIONS] NAME -- CMD [ARG...]",
         "summary": (
             "Run a command inside a container and capture its output.\n\n"
             "Unlike 'run' (an interactive PTY session), exec is non-interactive: "
@@ -151,9 +162,18 @@ HELP_PAGES = {
             "exits with the command's exit code. Built for scripting and "
             "one-off checks.\n\n"
             "Everything after '--' is the command. The exit code of exec is the "
-            "command's exit code, so it composes in shell pipelines."
+            "command's exit code, so it composes in shell pipelines.\n\n"
+            "Note: use absolute command paths (e.g. /usr/bin/id) — bare names "
+            "can hit a stripped-Python PATH lookup in minimal images."
         ),
-        "options": [("-h, --help", "Show this help.")],
+        "options": [
+            ("-h, --help", "Show this help."),
+            ("--init", "Start the container's service manager (mini-systemd)."),
+            ("--box64", "Enable x86_64 emulation (needs box64 in the container)."),
+            ("--shared-display", "Share termux-x11 display (alias: --shared-x11)."),
+            ("--user [NAME]", "Run as this user instead of the default."),
+            ("--root", "Force root even if a default user is set."),
+        ],
         "examples": [
             "apatch-chroot exec ubuntu -- cat /etc/os-release",
             "apatch-chroot exec ubuntu -- apt list --installed",

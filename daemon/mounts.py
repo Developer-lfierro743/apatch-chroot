@@ -121,12 +121,18 @@ def _assert_safe_rootfs(rootfs):
         raise OSError(f"refusing to mount into rootfs outside {CONTAINERS_DIR}: {real}")
 
 
-def setup_mounts(rootfs):
+def setup_mounts(rootfs, x11=False):
     """Mount the standard pseudo-filesystem set into *rootfs*. Returns mount list.
 
     Order matters: parents before children. Each entry is recorded so teardown
     can reverse it. Failures on an individual mount are logged and skipped so
     one missing piece (e.g. no /dev/mqueue) does not abort the whole login.
+
+    When *x11* is set, also bind the host's termux-x11 socket into the
+    container's /tmp/.X11-unix so GUI apps reach the display. This bind lives
+    in the SAME private mount namespace as everything else here, so it cannot
+    propagate to the host (the whole reason this is safe where chroot-distro's
+    --shared-display was not: we are in a verified-private namespace).
 
     Refuses outright if *rootfs* is not under CONTAINERS_DIR (see
     _assert_safe_rootfs) — this must never bind host /dev onto a host path.
@@ -184,6 +190,21 @@ def setup_mounts(rootfs):
         mount("mqueue", dst, "mqueue", 0)
 
     _try(_mqueue, "dev/mqueue")
+
+    # X11 (termux-x11): bind the host's X11 socket into the container so GUI
+    # apps reach the display. Lives in this private namespace — cannot leak to
+    # the host. Skipped silently if termux-x11 isn't running (no socket yet).
+    if x11:
+        def _x11():
+            # termux-x11's socket dir (Termux prefix tmp).
+            src = "/data/data/com.termux/files/usr/tmp/.X11-unix"
+            if not os.path.isdir(src):
+                raise OSError("no host X11 socket (is termux-x11 running?)")
+            dst = os.path.join(rootfs, "tmp", ".X11-unix")
+            os.makedirs(dst, exist_ok=True)
+            mount(src, dst, None, MS_BIND | MS_REC)
+
+        _try(_x11, "tmp/.X11-unix")
 
     return mounted
 
