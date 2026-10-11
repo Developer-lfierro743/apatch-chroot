@@ -244,11 +244,13 @@ def cmd_remove(name):
     return 1
 
 
-def cmd_convert(name, as_name):
+def cmd_convert(name, as_name, move=False):
     s = connect()
     args = {"name": name}
     if as_name:
         args["as_name"] = as_name
+    if move:
+        args["move"] = True
     request(s, {"cmd": "convert", "args": args})
 
     def on_progress(phase, detail):
@@ -258,7 +260,10 @@ def cmd_convert(name, as_name):
     s.close()
     if ok:
         src = f" (from {data['image']})" if data.get("image") else ""
-        print(f"converted '{data['converted']}'{src} — {data['entries']} entries")
+        if data.get("moved"):
+            print(f"moved '{data['converted']}'{src} — renamed, no copy")
+        else:
+            print(f"converted '{data['converted']}'{src} — {data['entries']} entries")
         return 0
     print(f"error: {data['error']}", file=sys.stderr)
     return 1
@@ -479,10 +484,14 @@ def main(argv):
             return 2
         return cmd_remove(args[1])
     if cmd == "convert":
-        if len(args) < 2:
-            print("usage: apatch-chroot convert NAME [AS_NAME]", file=sys.stderr)
+        # Strip flags from the positional args (NAME, AS_NAME).
+        positional = [a for a in args[1:] if not a.startswith("--")]
+        move = "--move" in args
+        if not positional:
+            print("usage: apatch-chroot convert NAME [AS_NAME] [--move]", file=sys.stderr)
+            print("  --move  rename instead of copy (zero extra space; consumes the source)", file=sys.stderr)
             return 2
-        return cmd_convert(args[1], args[2] if len(args) > 2 else None)
+        return cmd_convert(positional[0], positional[1] if len(positional) > 1 else None, move=move)
     if cmd == "kill":
         if len(args) < 2:
             print("usage: apatch-chroot kill NAME", file=sys.stderr)

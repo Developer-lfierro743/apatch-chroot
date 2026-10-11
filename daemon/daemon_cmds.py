@@ -638,6 +638,43 @@ def convert_from_chroot_distro(args, conn):
     dest_rootfs = os.path.join(dest_dir, "rootfs")
     if os.path.exists(dest_rootfs):
         return {"ok": False, "error": f"apatch-chroot container '{as_name}' already exists; remove it first"}
+
+    # --move: rename the rootfs instead of copying. Instant, zero extra space
+    # (both paths are on the same /data filesystem). Use this when the container
+    # is bigger than the free space a copy would need. The chroot-distro original
+    # is consumed (it becomes the apatch-chroot one) — that's the trade-off.
+    move = args.get("move")
+    if move:
+        # Must be the same filesystem for os.rename to work; if not, rename
+        # raises OSError and we fall back to a copy.
+        os.makedirs(dest_dir, exist_ok=True)
+        # dest_rootfs must not exist yet for a clean rename.
+        with contextlib.suppress(OSError):
+            os.rmdir(dest_rootfs)
+        progress("move", f"{name} -> {as_name} (rename, no copy)")
+        try:
+            os.rename(src_rootfs, dest_rootfs)
+        except OSError as e:
+            progress("move-fallback", f"rename failed ({e}); copying instead")
+            os.makedirs(dest_rootfs, exist_ok=True)
+            copied = _copy_tree(src_rootfs, dest_rootfs, progress)
+        else:
+            copied = -1  # moved, not copied
+        # Carry over the source manifest metadata.
+        if image_ref:
+            with contextlib.suppress(OSError):
+                with open(os.path.join(dest_dir, "image"), "w") as f:
+                    f.write(image_ref)
+        if arch:
+            with contextlib.suppress(OSError):
+                with open(os.path.join(dest_dir, "arch"), "w") as f:
+                    f.write(arch)
+        progress("done", "moved" if copied == -1 else f"{copied} entries (fallback copy)")
+        conn.sendall(
+            b"\x02" + json.dumps({"ok": True, "data": {"converted": as_name, "moved": copied == -1, "image": image_ref}}).encode() + b"\n"
+        )
+        return None
+
     os.makedirs(dest_rootfs, exist_ok=True)
 
     progress("copy", f"{name} -> {as_name}")
