@@ -628,7 +628,10 @@ def main(argv):
             return 2
         name = args[1]
         opts, command = parse_session_flags(args[2:])
-        command = command or ["/bin/bash"]
+        # Default to a login shell so a bare 'run ubuntu' feels like a real
+        # login (loads /etc/profile, proper prompt). An explicit command
+        # (after --) runs as-is, no -l.
+        command = command or ["/bin/bash", "-l"]
         return cmd_run(name, command, **opts)
     if cmd == "login":
         if len(args) < 2:
@@ -637,8 +640,10 @@ def main(argv):
             return 2
         name = args[1]
         opts, _command = parse_session_flags(args[2:])
-        # login is just run with an interactive shell.
-        return cmd_run(name, ["/bin/bash"], **opts)
+        # A real login shell: bash -l sources /etc/profile + ~/.bash_profile,
+        # sets a proper prompt (not the bare 'root@localhost:/#'), PATH, etc.
+        # This is what makes 'login' feel like logging into a real machine.
+        return cmd_run(name, ["/bin/bash", "-l"], **opts)
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 
