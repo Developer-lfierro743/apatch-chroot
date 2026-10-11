@@ -14,6 +14,7 @@ import json
 import os
 import socket
 import sys
+import time
 
 from pages import HELP_PAGES, TOP_COMMANDS
 from render import render_front, render_page, term_width
@@ -26,17 +27,50 @@ VERSION = "v0.1.1"
 PROGRAM = "apatch-chroot"
 
 
-def connect():
-    """Connect to the daemon socket, trying the primary path then fallbacks."""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+def connect(wait: bool = True, timeout: float = 20.0):
+    """Connect to the daemon socket, trying the primary path then fallbacks.
+
+    After a reboot the daemon needs time to start (Android finishes booting,
+    then FBE unlocks Termux's home, then the watchdog launches python). During
+    that window the socket does not exist yet. With wait=True we retry for up
+    to `timeout` seconds instead of crashing with a raw traceback — the common
+    "I just rebooted and it's not up yet" case.
+    """
+    deadline = time.monotonic() + (timeout if wait else 0)
     last = None
-    for path in (SOCKET_PATH, *SOCKET_FALLBACKS):
-        try:
-            s.connect(path)
-            return s
-        except OSError as e:
-            last = e
-    raise last
+    while True:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        for path in (SOCKET_PATH, *SOCKET_FALLBACKS):
+            try:
+                s.connect(path)
+                return s
+            except OSError as e:
+                last = e
+        s.close()
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(1.0)
+    raise DaemonNotReady(last)
+
+
+class DaemonNotReady(Exception):
+    """The daemon socket never appeared within the wait window."""
+
+    def __init__(self, cause):
+        self.cause = cause
+        super().__init__(str(cause))
+
+    def hint(self) -> str:
+        return (
+            "Could not reach the apatch-chroot daemon.\n"
+            "  - Just rebooted? The daemon starts ~30-60s after boot (it waits\n"
+            "    for Android to finish booting and Termux storage to unlock).\n"
+            "    Wait a moment and retry.\n"
+            "  - Still failing? Check the module is enabled in APatch and the\n"
+            "    watchdog is running:\n"
+            "      su -c 'pgrep -f apatch-chroot/daemon/daemon.py'\n"
+            "      su -c 'tail /data/adb/modules/apatch_chroot/daemon.log'"
+        )
 
 
 def request(s, obj):
@@ -327,4 +361,14 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        sys.exit(main(sys.argv))
+    except DaemonNotReady as e:
+        # Friendly message instead of a raw Python traceback — the daemon not
+        # being up (usually right after a reboot) is expected, not a crash.
+        print(f"apatch-chroot: {e.hint()}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        sys.exit(0)

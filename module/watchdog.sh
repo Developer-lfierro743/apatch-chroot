@@ -35,6 +35,21 @@ echo $$ > "$LOCKDIR/pid"
 
 while true; do
     if [ -x "$PYTHON" ]; then
+        # Keep the client in sync with the flashed module on every boot. The
+        # module dir is system_file context (app can't read it), so the daemon
+        # (root) copies the current client into Termux's app-readable lib. This
+        # fixes the "flashed v0.1.1 but client still v0.1.0" drift: customize.sh
+        # only runs at install time, so a stale client survived reflashes.
+        CLIENT_SRC=$MODDIR/client
+        CLIENT_DST=/data/data/com.termux/files/usr/lib/apatch-chroot
+        if [ -d "$CLIENT_SRC" ]; then
+            mkdir -p "$CLIENT_DST" 2>/dev/null
+            for cf in "$CLIENT_SRC"/*.py; do
+                [ -f "$cf" ] && cp -f "$cf" "$CLIENT_DST/" 2>/dev/null
+            done
+            chmod 644 "$CLIENT_DST/"*.py 2>/dev/null
+        fi
+
         # pgrep -f matches the daemon cmdline; this watchdog's cmdline is
         # "sh .../watchdog.sh" and does not contain daemon.py, so no self-match.
         if ! pgrep -f "$DAEMON" >/dev/null 2>&1; then
