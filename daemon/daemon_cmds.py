@@ -566,6 +566,36 @@ def _pid_alive(pid):
         return False
 
 
+def container_stats(args):
+    """Report disk usage + running sessions per container.
+
+    Returns per-container: name, size, running session pids, default user,
+    source image. Genuinely useful for a container tool — see at a glance what's
+    eating disk and what's currently running. Never raises.
+    """
+    out = []
+    if not os.path.isdir(CONTAINERS_DIR):
+        return {"containers": []}
+    for name in sorted(os.listdir(CONTAINERS_DIR)):
+        rootfs = os.path.join(CONTAINERS_DIR, name, "rootfs")
+        if os.path.islink(rootfs) or not os.path.isdir(rootfs):
+            continue
+        image = ""
+        with contextlib.suppress(OSError):
+            with open(os.path.join(CONTAINERS_DIR, name, "image")) as f:
+                image = f.read().strip()
+        # Running sessions (live pids only).
+        running = [p for p in _SESSIONS.get(name, []) if _pid_alive(p)]
+        out.append({
+            "name": name,
+            "image": image,
+            "size_bytes": _du(rootfs),
+            "running_sessions": len(running),
+            "default_user": read_default_user(name) or "root",
+        })
+    return {"containers": out}
+
+
 # ---------------------------------------------------------------------------
 # install: OCI pull + layer extract
 # ---------------------------------------------------------------------------

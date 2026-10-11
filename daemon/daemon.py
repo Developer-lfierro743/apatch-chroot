@@ -99,6 +99,9 @@ def handle_request(req, conn):
     if cmd == "info":
         from daemon_cmds import host_info
         return {"ok": True, "data": host_info()}
+    if cmd == "stats":
+        from daemon_cmds import container_stats
+        return {"ok": True, "data": container_stats(req.get("args", {}))}
     if cmd == "shutdown":
         return {"ok": True, "data": {"bye": True}, "_shutdown": True}
     return {"ok": False, "error": f"unknown cmd: {cmd}"}

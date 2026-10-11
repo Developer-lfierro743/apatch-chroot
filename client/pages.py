@@ -32,6 +32,7 @@ TOP_COMMANDS = (
     ("kill", "Stop a container and tear down its mounts."),
     ("remove", "Delete a container and its rootfs.", "!deletes all data — no undo"),
     ("info", "Show daemon and host capability status."),
+    ("stats", "Show per-container disk usage and running sessions."),
 )
 
 # Shown at the bottom of the front page — the #1 thing that confuses people.
@@ -278,6 +279,18 @@ HELP_PAGES = {
         ),
         "options": [("-h, --help", "Show this help.")],
         "examples": ["apatch-chroot info"],
+    },
+    "stats": {
+        "usage": "stats",
+        "summary": (
+            "Show per-container disk usage, running sessions, and default user.\n\n"
+            "A quick overview of what's installed, how big each container is, "
+            "how many sessions are currently running, and which user it logs in "
+            "as by default. Handy before a big install (check free space) or to "
+            "see what's active."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": ["apatch-chroot stats"],
     },
     "check-update": {
         "usage": "check-update",

@@ -209,6 +209,35 @@ def cmd_info():
     return 0
 
 
+def cmd_stats():
+    """Show per-container disk usage, running sessions, and default user."""
+    s = connect()
+    request(s, {"cmd": "stats"})
+    resp = read_control_line(s)
+    s.close()
+    if not (resp and resp.get("ok")):
+        print(f"error: {(resp or {}).get('error', 'could not reach daemon')}", file=sys.stderr)
+        return 1
+    containers = resp["data"].get("containers", [])
+    if not containers:
+        print("no containers installed.")
+        return 0
+    # Column header + rows. Truncate image to keep it phone-width friendly.
+    print(f"{'NAME':<16}{'SIZE':>10}  {'SESSIONS':>8}  {'USER':<10}IMAGE")
+    total = 0
+    for c in containers:
+        total += c.get("size_bytes", 0)
+        img = c.get("image") or "-"
+        if len(img) > 28:
+            img = img[:27] + "…"
+        print(
+            f"{c['name']:<16}{_human(c.get('size_bytes', 0)):>10}  "
+            f"{c.get('running_sessions', 0):>8}  {c.get('default_user', 'root'):<10}{img}"
+        )
+    print(f"{'TOTAL':<16}{_human(total):>10}")
+    return 0
+
+
 def _version_tuple(v):
     """Turn 'v0.3.0' into (0, 3, 0) for comparison. Non-numeric parts -> 0."""
     import re
@@ -602,6 +631,8 @@ def main(argv):
         return cmd_ping()
     if cmd == "info":
         return cmd_info()
+    if cmd == "stats":
+        return cmd_stats()
     if cmd in ("check-update", "update"):
         return cmd_check_update()
     if cmd == "install":
