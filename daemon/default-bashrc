@@ -1,0 +1,33 @@
+# ~/.bashrc — apatch-chroot default
+#
+# Loaded by the daemon via `bash --rcfile ~/.bashrc` on login. This is your
+# shell config: prompt, aliases, env. Edit freely — it's yours.
+#
+# NOTE: apatch-chroot does NOT source /etc/profile or /etc/profile.d/ on login
+# (that's where chroot-distro leftovers poison PATH). If you want something from
+# those, add it here. PATH is set by the daemon to the container's own dirs.
+
+# A clean colored prompt: user@host:cwd$
+PS1='\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+
+# Make sure the container's own bin dirs are always in PATH (defensive).
+case ":$PATH:" in
+    *:/usr/bin:*) ;;
+    *) export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH" ;;
+esac
+
+# Handy aliases.
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias grep='grep --color=auto'
+
+# History.
+export HISTSIZE=10000
+export HISTFILESIZE=20000
+shopt -s histappend 2>/dev/null
+
+# Enable bash completion if available.
+if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+fi

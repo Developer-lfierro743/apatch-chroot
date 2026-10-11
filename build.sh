@@ -37,6 +37,8 @@ done
 for f in "$HERE"/daemon/*.sh; do
     [ -f "$f" ] && cp "$f" "$STAGE/daemon/"
 done
+# The default ~/.bashrc template (no extension — must be copied explicitly).
+[ -f "$HERE/daemon/default-bashrc" ] && cp "$HERE/daemon/default-bashrc" "$STAGE/daemon/"
 for f in "$HERE"/client/*.py; do
     cp "$f" "$STAGE/client/"
 done

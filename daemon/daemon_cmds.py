@@ -41,6 +41,9 @@ _GUEST_ENV = {
     "TERM": "xterm-256color",
     "USER": "root",
     "SHELL": "/bin/bash",
+    # A proper colored prompt (user@host:cwd$). Without this, --norc bash shows
+    # the bare "bash-5.2#" default. Set here so every login looks normal.
+    "PS1": "\\[\\e[1;32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ ",
 }
 
 
@@ -284,6 +287,22 @@ _DAEMON_DIR = os.path.dirname(os.path.abspath(__file__))
 INIT_SCRIPT = os.path.join(_DAEMON_DIR, "init.sh")
 SYSTEMCTL_SHIM = os.path.join(_DAEMON_DIR, "systemctl-shim.sh")
 LOGIN_WRAPPER = os.path.join(_DAEMON_DIR, "login-wrapper.sh")
+DEFAULT_BASHRC = os.path.join(_DAEMON_DIR, "default-bashrc")
+
+
+def _ensure_default_bashrc(rootfs):
+    """Drop our default ~/.bashrc into the container if it has none.
+
+    Gives logins a nice colored prompt + aliases out of the box. Never
+    overwrites an existing .bashrc (the user's own config wins). Best-effort.
+    """
+    dest = os.path.join(rootfs, "root", ".bashrc")
+    if os.path.isfile(dest) or not os.path.isfile(DEFAULT_BASHRC):
+        return
+    try:
+        shutil.copy2(DEFAULT_BASHRC, dest)
+    except OSError:
+        pass
 
 
 def stage_login_wrapper(rootfs):
@@ -472,21 +491,25 @@ def run_container(args, conn):
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display, audio=use_audio))
                 # Fall through to plain exec if staging failed.
-            # Login shell (bash): exec it DIRECTLY with a clean env and flags
-            # that stop it re-poisoning PATH. The container's ~/.bashrc often
-            # does `export PATH=/system/bin:/apex/...` (a chroot-distro leftover),
-            # which makes ls/apt/bash "command not found". We defeat it two ways:
-            #   --norc --noprofile  → bash does NOT source ~/.bashrc or /etc/profile
-            #   a clean env passed to execve → PATH points at the container's own
-            #                              /usr/bin, /bin (where the tools live)
-            # This is done here, in the daemon, NOT via a wrapper script — because
-            # any wrapper that ends in `bash -i` just re-sources .bashrc and
-            # re-poisons PATH. Doing it at exec time is the only reliable fix.
+            # Login shell (bash): exec it DIRECTLY with a clean env.
+            #   --rcfile /root/.bashrc  → sources ONLY the user's own bashrc
+            #       (permanent prompt + aliases), NEVER /etc/profile or
+            #       /etc/profile.d/chroot-profile.sh (the PATH poison). If the
+            #       file doesn't exist, bash silently skips it.
+            #   clean env passed to execve → PATH points at the container's own
+            #       /usr/bin, /bin (where the tools live), so even before the
+            #       rcfile runs, coreutils resolve.
+            # This is the reliable fix: a user .bashrc gives a nice permanent
+            # prompt, while the chroot-distro profile files never run.
             if command and command[0].endswith("bash"):
                 env = _guest_env(display=use_display, audio=use_audio)
-                # Absolute PATH so bash finds coreutils even before .bashrc.
                 env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                os.execve("/bin/bash", ["/bin/bash", "--norc", "--noprofile", "-i"], env)
+                # Ensure a ~/.bashrc exists (drop our default if none) so the
+                # login gets a nice prompt + aliases. The user can edit it.
+                _ensure_default_bashrc(rootfs)
+                rcfile = os.path.join(rootfs, "root", ".bashrc")
+                argv = ["/bin/bash", "--rcfile", rcfile if os.path.isfile(rcfile) else "/dev/null", "-i"]
+                os.execve("/bin/bash", argv, env)
                 # (execve replaces the process; if it fails we fall through)
             # command[0] is absolute now (resolve_command_path), so execv skips
             # the PATH search that crashed on stripped chroots.
