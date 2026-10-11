@@ -29,6 +29,7 @@ TOP_COMMANDS = (
     ("service", "Manage a container's services from the host (start/stop/enable/status)."),
     ("setuser", "Set a container's default login user (least privilege)."),
     ("check-update", "Check GitHub for a newer release."),
+    ("self-update", "Download the latest module zip to flash in APatch."),
     ("kill", "Stop a container and tear down its mounts."),
     ("remove", "Delete a container and its rootfs.", "!deletes all data — no undo"),
     ("info", "Show daemon and host capability status."),
@@ -304,6 +305,20 @@ HELP_PAGES = {
         ),
         "options": [("-h, --help", "Show this help.")],
         "examples": ["apatch-chroot check-update"],
+    },
+    "self-update": {
+        "usage": "self-update",
+        "summary": (
+            "Download the latest module zip so you can flash it in APatch.\n\n"
+            "Unlike check-update (which only reports), this fetches the newest "
+            "release zip straight to /sdcard/Download/apatch-chroot.zip and "
+            "prints the flash steps. Works even if APatch's own update polling "
+            "hasn't noticed the release. It does NOT flash or reboot — you do "
+            "that, since only you should reboot the device.\n\n"
+            "Then: APatch → Modules → Install from storage → pick the zip → reboot."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": ["apatch-chroot self-update"],
     },
     "service": {
         "usage": "service NAME VERB [UNIT]",

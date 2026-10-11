@@ -12,6 +12,7 @@ Usage:
 
 import json
 import os
+import shutil
 import socket
 import sys
 import time
@@ -28,7 +29,7 @@ SOCKET_FALLBACKS = (
     "/data/local/tmp/apatch-chroot.sock",
     "/dev/apatch-chroot.sock",
 )
-VERSION = "v0.4.0.1"
+VERSION = "v0.4.0.2"
 PROGRAM = "apatch-chroot"
 # Where check-update looks for the latest release.
 GITHUB_REPO = "Developer-lfierro743/apatch-chroot"
@@ -296,6 +297,70 @@ def cmd_check_update():
         print("then flash the zip in APatch and reboot.")
         return 1
     print(f"latest:    {latest}  — you're up to date.")
+    return 0
+
+
+def _fetch_latest_release():
+    """Fetch the latest release metadata from GitHub. Returns (tag, zip_url) or
+    (None, None) on failure. Shared by check-update and self-update."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            RELEASES_API, headers={"User-Agent": f"apatch-chroot/{VERSION}"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception:
+        return None, None
+    tag = data.get("tag_name", "")
+    zip_url = None
+    for asset in data.get("assets", []):
+        if asset.get("name", "").endswith(".zip"):
+            zip_url = asset.get("browser_download_url")
+            break
+    return tag or None, zip_url
+
+
+def cmd_self_update():
+    """Download the latest module zip so you can flash it in APatch.
+
+    This does NOT flash or reboot (only you should do that) — it fetches the
+    newest release zip to a known path and tells you exactly what to do. Works
+    regardless of whether APatch's updateJson polling noticed the release.
+    """
+    import urllib.request
+    tag, zip_url = _fetch_latest_release()
+    if not tag:
+        print("could not reach GitHub — check your network and try again.")
+        return 1
+    if _version_tuple(tag) <= _version_tuple(VERSION):
+        print(f"you're already on the latest ({VERSION}).")
+        return 0
+    if not zip_url:
+        print(f"release {tag} has no zip asset — get it manually: {RELEASES_URL}")
+        return 1
+    # Save to shared storage so you can find it in a file manager / APatch.
+    dest_dir = "/sdcard/Download"
+    dest = os.path.join(dest_dir, "apatch-chroot.zip")
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        print(f"downloading {tag} → {dest}")
+        req = urllib.request.Request(
+            zip_url, headers={"User-Agent": f"apatch-chroot/{VERSION}"}
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp, open(dest, "wb") as f:
+            shutil.copyfileobj(resp, f)
+    except Exception as e:
+        print(f"download failed: {e}")
+        print(f"get it manually: {zip_url}")
+        return 1
+    size = os.path.getsize(dest)
+    print(f"downloaded {size} bytes to {dest}")
+    print()
+    print("To install:")
+    print("  1. APatch → Modules → Install from storage")
+    print("  2. Pick /sdcard/Download/apatch-chroot.zip")
+    print("  3. Reboot")
     return 0
 
 
@@ -656,6 +721,8 @@ def main(argv):
         return cmd_stats()
     if cmd in ("check-update", "update"):
         return cmd_check_update()
+    if cmd == "self-update":
+        return cmd_self_update()
     if cmd == "install":
         if len(args) < 2:
             print("usage: apatch-chroot install IMAGE [AS_NAME]", file=sys.stderr)
