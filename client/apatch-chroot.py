@@ -22,7 +22,7 @@ SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock"
 # Older installs left the daemon on /dev; try it too so a stale client still
 # finds the daemon after an upgrade.
 SOCKET_FALLBACKS = ("/dev/apatch-chroot.sock",)
-VERSION = "v0.1.0"
+VERSION = "v0.1.1"
 PROGRAM = "apatch-chroot"
 
 
