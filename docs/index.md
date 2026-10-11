@@ -11,6 +11,8 @@ How apatch-chroot works, and why it's built the way it is.
 
 - **[services.md](services.md)** — the container init / mini-systemd, the `systemctl` shim, and managing services from the host.
 - **[display.md](display.md)** — running GUI apps via termux-x11 (`--shared-display`).
+- **[electron.md](electron.md)** — running VSCode / Chromium / Electron apps (`--no-sandbox`).
+- **[desktop.md](desktop.md)** — a full LXQt desktop.
 - **[storage.md](storage.md)** — install vs convert vs `--move`, and disk-space math.
 - **[box64.md](box64.md)** — optional x86_64 emulation.
 - **[protocol.md](protocol.md)** — the wire protocol between client, broker, and core.
