@@ -239,10 +239,16 @@ def cmd_stats():
 
 
 def _version_tuple(v):
-    """Turn 'v0.3.0' into (0, 3, 0) for comparison. Non-numeric parts -> 0."""
+    """Turn 'v0.3.0' into (0, 3, 0) for comparison, always length 3.
+
+    Pads with zeros so 'v0.3' -> (0, 3, 0) and indexing [0]/[1] is always safe.
+    Non-numeric parts -> 0.
+    """
     import re
-    nums = re.findall(r"\d+", v or "")
-    return tuple(int(n) for n in nums[:3]) or (0,)
+    nums = [int(n) for n in re.findall(r"\d+", v or "")]
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums[:3])
 
 
 def cmd_check_update():
@@ -264,8 +270,17 @@ def cmd_check_update():
     if not latest:
         print("no release found upstream.")
         return 0
-    if _version_tuple(latest) > _version_tuple(VERSION):
-        print(f"latest:    {latest}  ← UPDATE AVAILABLE")
+    cur = _version_tuple(VERSION)
+    lat = _version_tuple(latest)
+    if lat > cur:
+        # Classify the bump: major (first number), minor (second), or patch.
+        if lat[0] > cur[0]:
+            kind = "MAJOR"
+        elif lat[1] > cur[1]:
+            kind = "minor"
+        else:
+            kind = "patch"
+        print(f"latest:    {latest}  ← {kind} UPDATE AVAILABLE")
         # Point at the zip asset if the release has one.
         for asset in data.get("assets", []):
             if asset.get("name", "").endswith(".zip"):
