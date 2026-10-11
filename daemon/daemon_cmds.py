@@ -584,6 +584,32 @@ def _copy_tree(src, dst, progress):
 # exec: non-interactive command, output captured (no PTY)
 # ---------------------------------------------------------------------------
 
+def service_container(args, conn):
+    """Host-side service management: run the container's systemctl shim.
+
+    args: {"name", "verb": start|stop|restart|status|enable|disable|is-active
+                      |is-enabled|list-units, "unit": "sshd" (optional)}
+
+    This is a thin wrapper over exec_container: it invokes /usr/bin/systemctl
+    (the shim installed by stage_init) inside the container with the given verb
+    and unit, so you can manage container services from the host without
+    logging in. Returns the shim's exit code, which follows systemd's contract
+    (0 = active/enabled, 3 = inactive, etc.).
+    """
+    name = args.get("name")
+    verb = args.get("verb")
+    unit = args.get("unit")
+    if not name or not verb:
+        return {"ok": False, "error": "service requires a name and a verb"}
+    if not os.path.isdir(os.path.join(CONTAINERS_DIR, name, "rootfs")):
+        return {"ok": False, "error": f"no such container: {name}"}
+
+    cmd = ["/usr/bin/systemctl", verb]
+    if unit:
+        cmd.append(unit)
+    return exec_container({"name": name, "command": cmd}, conn)
+
+
 def exec_container(args, conn):
     """Run a command in a container WITHOUT a PTY; capture stdout/stderr.
 

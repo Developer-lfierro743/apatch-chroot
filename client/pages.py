@@ -26,6 +26,7 @@ TOP_COMMANDS = (
     ("clone", "Copy a container (snapshot before risky changes)."),
     ("push", "Copy a host file/dir into a container."),
     ("pull", "Copy a file/dir out of a container to the host."),
+    ("service", "Manage a container's services from the host (start/stop/enable/status)."),
     ("kill", "Stop a container and tear down its mounts."),
     ("remove", "Delete a container and its rootfs.", "!deletes all data — no undo"),
     ("info", "Show daemon and host capability status."),
@@ -226,5 +227,28 @@ HELP_PAGES = {
         ),
         "options": [("-h, --help", "Show this help.")],
         "examples": ["apatch-chroot info"],
+    },
+    "service": {
+        "usage": "service NAME VERB [UNIT]",
+        "summary": (
+            "Manage a container's services from the host, without logging in.\n\n"
+            "This runs the container's systemctl shim (installed when the "
+            "container is run with --init) with the given VERB and UNIT. Android "
+            "has no systemd, so this shim talks to the container's mini-init "
+            "instead. The command is resolved from the container's unit file "
+            "(ExecStart=) or a built-in fallback.\n\n"
+            "VERBS: start stop restart reload status enable disable is-active "
+            "is-enabled list-units\n\n"
+            "Exit codes follow systemd's contract: 0 = active/enabled, "
+            "3 = inactive, so scripts using 'is-active' in conditionals work."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": [
+            "apatch-chroot service ubuntu start sshd",
+            "apatch-chroot service ubuntu enable sshd",
+            "apatch-chroot service ubuntu status sshd",
+            "apatch-chroot service ubuntu is-active sshd",
+            "apatch-chroot service ubuntu list-units",
+        ],
     },
 }

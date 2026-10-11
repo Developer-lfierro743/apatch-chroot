@@ -81,6 +81,13 @@ def handle_request(req, conn):
     if cmd == "pull":
         from daemon_cmds import copy_from_container
         return copy_from_container(req.get("args", {}))
+    if cmd == "service":
+        # Host-side service management: run the container's systemctl shim via
+        # the exec path. Reuses all the proven exec plumbing — no new chroot
+        # logic. The shim lives at /usr/bin/systemctl inside the container
+        # (installed by stage_init when the container was run with --init).
+        from daemon_cmds import service_container
+        return service_container(req.get("args", {}), conn)
     if cmd == "shutdown":
         return {"ok": True, "data": {"bye": True}, "_shutdown": True}
     return {"ok": False, "error": f"unknown cmd: {cmd}"}

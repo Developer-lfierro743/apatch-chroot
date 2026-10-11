@@ -336,6 +336,37 @@ def cmd_pull(name, src, dest):
     return 1
 
 
+# Verbs we accept for `service`. Anything else is passed through to the shim.
+SERVICE_VERBS = {
+    "start", "stop", "restart", "reload", "status", "enable", "disable",
+    "is-active", "is-enabled", "list-units",
+}
+
+
+def cmd_service(name, verb, unit=None):
+    """Manage a container's services from the host via the systemctl shim."""
+    if verb not in SERVICE_VERBS:
+        print(
+            f"error: unknown service verb '{verb}'. Use one of: "
+            + " ".join(sorted(SERVICE_VERBS)),
+            file=sys.stderr,
+        )
+        return 2
+    s = connect()
+    request(s, {"cmd": "service", "args": {"name": name, "verb": verb, "unit": unit}})
+    resp = read_control_line(s)
+    s.close()
+    if not resp or not resp.get("ok"):
+        print(f"error: {(resp or {}).get('error', 'unknown')}", file=sys.stderr)
+        return 1
+    data = resp["data"]
+    if data.get("stdout"):
+        sys.stdout.write(data["stdout"])
+    if data.get("stderr"):
+        sys.stderr.write(data["stderr"])
+    return data.get("exit", 0)
+
+
 def cmd_run(name, command, use_init=False):
     s = connect()
     request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init}})
@@ -472,6 +503,13 @@ def main(argv):
             print("usage: apatch-chroot pull NAME CONTAINER_SRC HOST_DEST", file=sys.stderr)
             return 2
         return cmd_pull(args[1], args[2], args[3])
+    if cmd == "service":
+        if len(args) < 3:
+            print("usage: apatch-chroot service NAME VERB [UNIT]", file=sys.stderr)
+            print("  verbs: " + " ".join(sorted(SERVICE_VERBS)), file=sys.stderr)
+            return 2
+        unit = args[3] if len(args) > 3 else None
+        return cmd_service(args[1], args[2], unit)
     if cmd == "run":
         if len(args) < 2:
             print("usage: apatch-chroot run <name> [--init] [-- CMD...]", file=sys.stderr)
