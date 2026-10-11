@@ -165,7 +165,11 @@ def cmd_ping():
     s.close()
     if resp and resp.get("ok"):
         d = resp["data"]
-        print(f"daemon alive: uid={d['uid']} pid={d['pid']}")
+        print(f"daemon alive: uid={d['uid']} pid={d['pid']} ({d.get('version', '?')})")
+        # One-time banner when the daemon just updated to a new version.
+        prev = d.get("just_updated")
+        if prev:
+            print(f"  ↑ updated from {prev} — welcome to {d.get('version', 'the latest')}!")
         return 0
     print(f"error: {resp}", file=sys.stderr)
     return 1
