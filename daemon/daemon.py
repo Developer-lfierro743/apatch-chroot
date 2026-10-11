@@ -115,7 +115,13 @@ def serve(conn):
             except ValueError as e:
                 _send(conn, {"ok": False, "error": f"bad json: {e}"})
                 continue
-            resp = handle_request(req, conn)
+            # A bug in a command handler must not kill the connection and hang
+            # the client — catch it, report it, keep serving on this relay.
+            try:
+                resp = handle_request(req, conn)
+            except Exception as e:
+                _send(conn, {"ok": False, "error": f"handler error: {e!r}"})
+                continue
             if resp is not None:
                 shutdown = resp.pop("_shutdown", False)
                 _send(conn, resp)
@@ -141,7 +147,12 @@ def main():
     )
 
     def register_relay():
-        """Keep a pool of connections to the broker ready to serve requests."""
+        """Keep a pool of connections to the broker ready to serve requests.
+
+        Robust against any failure: a bad request handler or a dropped broker
+        connection must not kill the thread (that would permanently shrink the
+        pool until the daemon restarts). Every path loops back to a fresh dial.
+        """
         while True:
             try:
                 conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -155,8 +166,10 @@ def main():
             # pipes a CLI request through it, then loops for the next.
             try:
                 serve(conn)
-            except OSError:
-                pass
+            except Exception as e:
+                # Catch EVERYTHING, not just OSError: a bug in a command
+                # handler would otherwise kill this relay thread for good.
+                print(f"relay error ({e!r}); reopening", flush=True)
             finally:
                 try:
                     conn.close()
