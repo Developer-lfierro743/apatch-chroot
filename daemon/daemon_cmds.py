@@ -278,15 +278,33 @@ def _lookup_uid_gid_pw(user):
         return None
 
 
-# Path to the init supervisor shipped alongside the daemon.
-INIT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "init.sh")
+# Path to the init supervisor + systemctl shim + login wrapper, shipped with
+# the daemon and staged into each container as needed.
+_DAEMON_DIR = os.path.dirname(os.path.abspath(__file__))
+INIT_SCRIPT = os.path.join(_DAEMON_DIR, "init.sh")
+SYSTEMCTL_SHIM = os.path.join(_DAEMON_DIR, "systemctl-shim.sh")
+LOGIN_WRAPPER = os.path.join(_DAEMON_DIR, "login-wrapper.sh")
 
 
-# Path to the init supervisor + systemctl shim shipped alongside the daemon.
-INIT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "init.sh")
-SYSTEMCTL_SHIM = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "systemctl-shim.sh"
-)
+def stage_login_wrapper(rootfs):
+    """Copy the login wrapper into the rootfs so a login shell can't lose PATH.
+
+    Returns the in-container path, or None if it couldn't be staged. The wrapper
+    sources the normal profile files but RE-ASSERTS PATH/TERM afterward, fixing
+    the 'command not found' + 'TERM not set' mess that `bash -l` alone causes
+    when a profile clobbers the environment.
+    """
+    if not os.path.isfile(LOGIN_WRAPPER):
+        return None
+    try:
+        local_bin = os.path.join(rootfs, "usr", "local", "bin")
+        os.makedirs(local_bin, exist_ok=True)
+        dest = os.path.join(local_bin, "apatch-login")
+        shutil.copy2(LOGIN_WRAPPER, dest)
+        os.chmod(dest, 0o755)
+        return "/usr/local/bin/apatch-login"
+    except OSError:
+        return None
 
 
 def stage_init(rootfs):
@@ -453,6 +471,18 @@ def run_container(args, conn):
                 init_path = stage_init(rootfs)
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display, audio=use_audio))
+                # Fall through to plain exec if staging failed.
+            # Login shell (bash -l / bare bash): use the wrapper so PATH/TERM
+            # survive profile sourcing. `bash -l` alone lets /etc/profile clobber
+            # the env, causing "command not found" + "TERM not set". The wrapper
+            # re-asserts our env last. Detect by command[0] being bash.
+            if command and command[0].endswith("bash"):
+                wrapper = stage_login_wrapper(rootfs)
+                if wrapper:
+                    env = _guest_env(display=use_display, audio=use_audio)
+                    # Pass the authoritative env to the wrapper as APATCH_ENV.
+                    env["APATCH_ENV"] = "\n".join(f"{k}={v}" for k, v in env.items() if k != "APATCH_ENV")
+                    os.execve("/bin/sh", ["/bin/sh", wrapper], env)
                 # Fall through to plain exec if staging failed.
             # command[0] is absolute now (resolve_command_path), so execv skips
             # the PATH search that crashed on stripped chroots.
