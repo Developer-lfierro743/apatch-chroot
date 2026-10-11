@@ -32,7 +32,9 @@ for f in "$HERE"/daemon/*.py; do
     cp "$f" "$STAGE/daemon/"
 done
 # The container init supervisor (POSIX sh) ships in the daemon dir too.
-[ -f "$HERE/daemon/init.sh" ] && cp "$HERE/daemon/init.sh" "$STAGE/daemon/"
+for f in "$HERE"/daemon/*.sh; do
+    [ -f "$f" ] && cp "$f" "$STAGE/daemon/"
+done
 for f in "$HERE"/client/*.py; do
     cp "$f" "$STAGE/client/"
 done

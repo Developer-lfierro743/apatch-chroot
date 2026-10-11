@@ -53,22 +53,48 @@ def _guest_env():
 INIT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "init.sh")
 
 
-def stage_init(rootfs):
-    """Copy the container init supervisor into the rootfs so it can be PID 1.
+# Path to the init supervisor + systemctl shim shipped alongside the daemon.
+INIT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "init.sh")
+SYSTEMCTL_SHIM = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "systemctl-shim.sh"
+)
 
-    Returns the in-container path to init.sh, or None if it could not be
-    staged (missing script). The init becomes the chroot's PID 1 and runs the
-    user's command as a child — Android's own PID 1 is never involved (the
-    daemon forks into a private mount namespace first).
+
+def stage_init(rootfs):
+    """Copy the container init supervisor + systemctl shim into the rootfs.
+
+    Returns the in-container path to the init script, or None if it could not
+    be staged. The init becomes the chroot's PID 1 and runs the user's command
+    as a child — Android's own PID 1 is never involved (the daemon forks into
+    a private mount namespace first).
+
+    Also installs the systemctl shim at /usr/bin/systemctl (and /bin/systemctl)
+    so `systemctl start sshd` inside the container talks to the mini-init
+    instead of the real (non-functional) systemd.
     """
     if not os.path.isfile(INIT_SCRIPT):
         return None
-    dest_dir = os.path.join(rootfs, "usr", "local", "bin")
     try:
-        os.makedirs(dest_dir, exist_ok=True)
-        dest = os.path.join(dest_dir, "apatch-init")
+        local_bin = os.path.join(rootfs, "usr", "local", "bin")
+        os.makedirs(local_bin, exist_ok=True)
+        dest = os.path.join(local_bin, "apatch-init")
         shutil.copy2(INIT_SCRIPT, dest)
         os.chmod(dest, 0o755)
+
+        # Install the systemctl shim, replacing the real binary so unit-file
+        # driven `systemctl` calls are intercepted by the mini-init.
+        if os.path.isfile(SYSTEMCTL_SHIM):
+            for bindir in ("usr/bin", "bin"):
+                d = os.path.join(rootfs, bindir)
+                if os.path.isdir(d):
+                    sd = os.path.join(d, "systemctl")
+                    # Keep the real one as systemctl.real if present.
+                    if os.path.exists(sd) and not os.path.exists(sd + ".real"):
+                        with contextlib.suppress(OSError):
+                            os.rename(sd, sd + ".real")
+                    shutil.copy2(SYSTEMCTL_SHIM, sd)
+                    os.chmod(sd, 0o755)
+
         return "/usr/local/bin/apatch-init"
     except OSError:
         return None
