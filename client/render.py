@@ -139,22 +139,18 @@ def render_front(program, version, top_commands, width, notes=()):
     print(file=sys.stderr)
     print(f"{C.BOLD}Commands:{C.RST}", file=sys.stderr)
     name_w = max(len(entry[0]) for entry in top_commands)
+    indent = " " * (name_w + 4)
     for entry in top_commands:
         name, desc = entry[0], entry[1]
         warn = entry[2] if len(entry) > 2 else None
-        if width < NARROW_BREAKPOINT:
-            print(f"  {C.GREEN}{name}{C.RST}", file=sys.stderr)
-            for line in _wrap(desc, width - 6):
-                print(f"      {line}", file=sys.stderr)
-            if warn:
-                print(f"      {C.YELLOW}{warn}{C.RST}", file=sys.stderr)
-        else:
-            desc_w = width - name_w - 6
-            lines = _wrap(desc, desc_w)
-            suffix = f"  {C.YELLOW}{warn}{C.RST}" if warn else ""
-            print(f"  {C.GREEN}{name.ljust(name_w)}{C.RST}  {lines[0]}{suffix}", file=sys.stderr)
-            for cont in lines[1:]:
-                print(f"  {' ' * name_w}  {cont}", file=sys.stderr)
+        print(f"  {C.GREEN}{name.ljust(name_w)}{C.RST}", file=sys.stderr)
+        # Description, wrapped, aligned under the command name.
+        for line in _wrap(desc, width - name_w - 6):
+            print(f"{indent}{line}", file=sys.stderr)
+        # Warning on its own wrapped line(s) so it never overruns the width.
+        if warn:
+            for line in _wrap(f"({warn})", width - name_w - 8):
+                print(f"{indent}  {C.YELLOW}{line}{C.RST}", file=sys.stderr)
     print(file=sys.stderr)
     if notes:
         print(f"{C.BOLD}Notes:{C.RST}", file=sys.stderr)
