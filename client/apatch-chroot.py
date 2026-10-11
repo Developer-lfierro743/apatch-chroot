@@ -243,16 +243,16 @@ def cmd_stats():
 
 
 def _version_tuple(v):
-    """Turn 'v0.3.0' into (0, 3, 0) for comparison, always length 3.
+    """Turn 'v0.4.0.1' into (0, 4, 0, 1) for comparison, always length 4.
 
-    Pads with zeros so 'v0.3' -> (0, 3, 0) and indexing [0]/[1] is always safe.
-    Non-numeric parts -> 0.
+    Supports a 4th 'subpatch' component for hotfixes (v0.4.0.1, v0.4.0.2, …).
+    Pads with zeros so indexing is always safe. Non-numeric parts -> 0.
     """
     import re
     nums = [int(n) for n in re.findall(r"\d+", v or "")]
-    while len(nums) < 3:
+    while len(nums) < 4:
         nums.append(0)
-    return tuple(nums[:3])
+    return tuple(nums[:4])
 
 
 def cmd_check_update():
@@ -277,13 +277,15 @@ def cmd_check_update():
     cur = _version_tuple(VERSION)
     lat = _version_tuple(latest)
     if lat > cur:
-        # Classify the bump: major (first number), minor (second), or patch.
+        # Classify the bump across 4 slots: major, minor, patch, subpatch.
         if lat[0] > cur[0]:
             kind = "MAJOR"
         elif lat[1] > cur[1]:
             kind = "minor"
-        else:
+        elif lat[2] > cur[2]:
             kind = "patch"
+        else:
+            kind = "subpatch"
         print(f"latest:    {latest}  ← {kind} UPDATE AVAILABLE")
         # Point at the zip asset if the release has one.
         for asset in data.get("assets", []):
