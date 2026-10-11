@@ -18,13 +18,21 @@ CANONICAL_PROGRAM_NAME = "APatch Chroot"
 
 TOP_COMMANDS = (
     ("install", "Pull an image from a registry and install it as a container."),
-    ("convert", "Import an existing chroot-distro container."),
+    ("convert", "Import an existing chroot-distro container.", "must be unmounted first (kill or reboot)"),
     ("run", "Run a command in a container (non-interactive or one-shot)."),
     ("login", "Open an interactive shell inside a container."),
     ("list", "List installed containers."),
     ("kill", "Stop a container and tear down its mounts."),
     ("remove", "Delete a container and its rootfs."),
     ("info", "Show daemon and host capability status."),
+)
+
+# Shown at the bottom of the front page — the #1 thing that confuses people.
+FRONT_NOTES = (
+    "After a reboot the daemon takes ~30-60s to start (it waits for Android to "
+    "finish booting and Termux storage to unlock). Commands auto-wait up to 20s "
+    "for it; if it is still not up, you will get a hint instead of an error.",
+    "No root needed: the client talks to the privileged daemon over a unix socket.",
 )
 
 HELP_PAGES = {

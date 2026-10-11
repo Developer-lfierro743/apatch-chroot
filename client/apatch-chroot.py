@@ -16,7 +16,7 @@ import socket
 import sys
 import time
 
-from pages import HELP_PAGES, TOP_COMMANDS
+from pages import HELP_PAGES, TOP_COMMANDS, FRONT_NOTES
 from render import render_front, render_page, term_width
 
 SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock"
@@ -315,7 +315,7 @@ def main(argv):
         if len(args) >= 2 and args[1] in HELP_PAGES:
             render_page(args[1], HELP_PAGES[args[1]], term_width())
         else:
-            render_front(PROGRAM, VERSION, TOP_COMMANDS, term_width())
+            render_front(PROGRAM, VERSION, TOP_COMMANDS, term_width(), notes=FRONT_NOTES)
         return 0
     if args[0] in HELP_PAGES and ("-h" in args[1:] or "--help" in args[1:]):
         render_page(args[0], HELP_PAGES[args[0]], term_width())

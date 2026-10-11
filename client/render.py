@@ -127,7 +127,7 @@ def render_page(name, page, width):
     _examples_block(page.get("examples", []), width)
 
 
-def render_front(program, version, top_commands, width):
+def render_front(program, version, top_commands, width, notes=()):
     """Render the top-level help (no command given, or --help)."""
     print(f"{C.BOLD}{C.CYAN}{program}{C.RST} {C.DIM}{version}{C.RST}", file=sys.stderr)
     print(_hrule(width), file=sys.stderr)
@@ -138,7 +138,7 @@ def render_front(program, version, top_commands, width):
     )
     print(file=sys.stderr)
     print(f"{C.BOLD}Commands:{C.RST}", file=sys.stderr)
-    name_w = max(len(n) for n, _ in top_commands)
+    name_w = max(len(entry[0]) for entry in top_commands)
     for entry in top_commands:
         name, desc = entry[0], entry[1]
         warn = entry[2] if len(entry) > 2 else None
@@ -156,6 +156,12 @@ def render_front(program, version, top_commands, width):
             for cont in lines[1:]:
                 print(f"  {' ' * name_w}  {cont}", file=sys.stderr)
     print(file=sys.stderr)
+    if notes:
+        print(f"{C.BOLD}Notes:{C.RST}", file=sys.stderr)
+        for note in notes:
+            for line in _wrap(note, width - 4):
+                print(f"  {C.DIM}{_BULLET}{C.RST} {line}", file=sys.stderr)
+        print(file=sys.stderr)
     print(
         f"{C.DIM}Run '{program} <command> --help' for details on a command.{C.RST}",
         file=sys.stderr,
