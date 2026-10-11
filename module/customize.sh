@@ -39,4 +39,14 @@ fi
 mkdir -p /data/apatch-chroot/containers
 chmod 755 /data/apatch-chroot
 
+# Helper scripts (fix-login.sh, setup-desktop.sh) into Termux bin so users can
+# run them right away. (The watchdog re-syncs these each boot too.)
+if [ -d "$MODDIR/scripts" ]; then
+    for sf in "$MODDIR"/scripts/*; do
+        [ -f "$sf" ] || continue
+        cp -f "$sf" "$BINDIR/$(basename "$sf")" 2>/dev/null
+        chmod 755 "$BINDIR/$(basename "$sf")" 2>/dev/null
+    done
+fi
+
 exit 0

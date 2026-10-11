@@ -55,6 +55,18 @@ while true; do
             cp -f "$DAEMON_DIR/broker.py" "$CLIENT_DST/broker.py" 2>/dev/null
             chmod 644 "$CLIENT_DST/broker.py" 2>/dev/null
         fi
+        # Helper scripts (fix-login.sh, setup-desktop.sh) — copy into Termux's
+        # bin so users can run them after an update. The module dir is
+        # system_file context (app can't read it), so they must be copied out.
+        if [ -d "$MODDIR/scripts" ]; then
+            SCRIPTS_DST=/data/data/com.termux/files/usr/bin
+            mkdir -p "$SCRIPTS_DST" 2>/dev/null
+            for sf in "$MODDIR"/scripts/*; do
+                [ -f "$sf" ] || continue
+                cp -f "$sf" "$SCRIPTS_DST/$(basename "$sf")" 2>/dev/null
+                chmod 755 "$SCRIPTS_DST/$(basename "$sf")" 2>/dev/null
+            done
+        fi
 
         # pgrep -f matches the daemon cmdline; this watchdog's cmdline is
         # "sh .../watchdog.sh" and does not contain daemon.py, so no self-match.

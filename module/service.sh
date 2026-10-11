@@ -17,9 +17,12 @@ WATCHDOG=$MODDIR/watchdog.sh
 
 # Install all daemon files (first boot / update). These live under /data (not
 # the encrypted Termux home), so this works as soon as /data is mounted.
+# Copy EVERYTHING in the daemon dir (not a hardcoded list) so new files added
+# in updates (binfmt.py, init.sh, systemctl-shim.sh, …) get deployed too — a
+# stale hardcoded list silently left new daemon files undeployed after a flash.
 mkdir -p "$DAEMON_DIR"
-for f in daemon.py daemon_cmds.py registry.py layer_extract.py arch.py mounts.py syscalls.py; do
-    cp -f "$MODDIR/daemon/$f" "$DAEMON_DIR/" 2>/dev/null
+for f in "$MODDIR"/daemon/*; do
+    [ -f "$f" ] && cp -f "$f" "$DAEMON_DIR/" 2>/dev/null
 done
 chmod 755 "$DAEMON_DIR"
 
