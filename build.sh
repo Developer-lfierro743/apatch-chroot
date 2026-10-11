@@ -38,6 +38,13 @@ done
 for f in "$HERE"/client/*.py; do
     cp "$f" "$STAGE/client/"
 done
+# Helper scripts (desktop setup, etc.) ship in scripts/.
+if [ -d "$HERE/scripts" ]; then
+    mkdir -p "$STAGE/scripts"
+    for f in "$HERE"/scripts/*; do
+        [ -f "$f" ] && cp "$f" "$STAGE/scripts/"
+    done
+fi
 
 # Zip from inside the staging dir so paths are relative (no leading ./).
 cd "$STAGE"
