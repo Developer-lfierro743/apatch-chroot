@@ -178,11 +178,14 @@ def setup_mounts(rootfs, x11=False, audio=False):
 
     _try(_devpts, "dev/pts")
 
-    # /dev/shm: POSIX shared memory.
+    # /dev/shm: POSIX shared memory. Sized generously (512M) because
+    # Chromium/Electron apps exhaust a small default tmpfs and crash — with
+    # room here they use real shared memory instead of needing
+    # --disable-dev-shm-usage. Namespace-scoped, host untouched.
     def _shm():
         dst = os.path.join(rootfs, "dev", "shm")
         os.makedirs(dst, exist_ok=True)
-        mount("tmpfs", dst, "tmpfs", 0, "mode=1777")
+        mount("tmpfs", dst, "tmpfs", 0, "mode=1777,size=512M")
 
     _try(_shm, "dev/shm")
 
