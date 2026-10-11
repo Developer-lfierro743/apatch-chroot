@@ -4,7 +4,7 @@ A chroot-based Linux container tool for Android, built around a **privileged APa
 
 Run real Linux distributions (Ubuntu, Debian, Alpine, …) on a rooted Android device — without the seccomp crashes that plague tools doing chroot in the Termux app process, and without the SELinux wall that blocks an app from reaching a root socket.
 
-> 📚 **Full documentation wiki:** [docs/](docs/) — architecture, safety, services, display, storage, box64, and the wire protocol. Start with [docs/index.md](docs/index.md).
+> 📚 **Documentation website:** https://developer-lfierro743.github.io/apatch-chroot/ (architecture, safety, services, desktop, box64, protocol). Source in [docs/](docs/).
 >
 > ⚠️ This runs a **root daemon** — read [SECURITY.md](SECURITY.md) before installing. Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
