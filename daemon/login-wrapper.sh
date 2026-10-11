@@ -43,7 +43,11 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export TERM="${TERM:-xterm-256color}"
 export HOME="${HOME:-/root}"
 
-# Hand off to an interactive shell. NOT --login: the wrapper already sourced the
-# profile files above, and bash --login would source them AGAIN, re-polluting
-# PATH with the host-path leak we just cleaned. Plain -i keeps aliases/prompt.
-exec /bin/bash -i
+# Hand off to an interactive shell. CRITICAL: use --norc AND force PATH via env.
+# A plain `bash -i` re-sources ~/.bashrc, which (on converted containers) runs
+# `export PATH=/system/bin:/apex/...` AGAIN — re-poisoning the clean PATH we
+# just set. --norc skips .bashrc on this final exec (we already sourced it above
+# for aliases/prompt), and `env PATH=...` forces the clean PATH regardless of
+# anything the shell tries to do. This is what makes login actually clean.
+exec env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+     HOME="${HOME:-/root}" TERM="${TERM:-xterm-256color}" /bin/bash --norc -i
