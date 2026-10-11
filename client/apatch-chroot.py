@@ -326,10 +326,10 @@ def cmd_kill(name):
     return 1
 
 
-def cmd_exec(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False):
+def cmd_exec(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False, shared_audio=False):
     """Run a command non-interactively; print its output and exit code."""
     s = connect()
-    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display}})
+    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio}})
     resp = read_control_line(s)
     s.close()
     if not resp or not resp.get("ok"):
@@ -424,9 +424,9 @@ def cmd_setuser(name, user):
     return 1
 
 
-def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False):
+def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False, shared_audio=False):
     s = connect()
-    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display}})
+    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio}})
     import termios
     import tty
 
@@ -510,6 +510,7 @@ def parse_session_flags(rest):
         "use_box64": False,
         "as_root": False,
         "shared_display": False,
+        "shared_audio": False,
         "user": None,
     }
     cmd = []
@@ -518,6 +519,8 @@ def parse_session_flags(rest):
         a = rest[i]
         if a in ("--shared-display", "--shared-x11"):
             opts["shared_display"] = True
+        elif a in ("--shared-audio", "--shared-sound"):
+            opts["shared_audio"] = True
         elif a == "--init":
             opts["use_init"] = True
         elif a == "--box64":
@@ -624,7 +627,7 @@ def main(argv):
     if cmd == "run":
         if len(args) < 2:
             print("usage: apatch-chroot run <name> [flags] [-- CMD...]", file=sys.stderr)
-            print("  flags: --init --box64 --shared-display(--shared-x11) --user U --root", file=sys.stderr)
+            print("  flags: --init --box64 --shared-display(--shared-x11) --shared-audio --user U --root", file=sys.stderr)
             return 2
         name = args[1]
         opts, command = parse_session_flags(args[2:])
@@ -636,7 +639,7 @@ def main(argv):
     if cmd == "login":
         if len(args) < 2:
             print("usage: apatch-chroot login <name> [flags]", file=sys.stderr)
-            print("  flags: --init --box64 --shared-display(--shared-x11) --user U --root", file=sys.stderr)
+            print("  flags: --init --box64 --shared-display(--shared-x11) --shared-audio --user U --root", file=sys.stderr)
             return 2
         name = args[1]
         opts, _command = parse_session_flags(args[2:])

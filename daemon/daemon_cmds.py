@@ -44,14 +44,18 @@ _GUEST_ENV = {
 }
 
 
-def _guest_env(display=False):
+def _guest_env(display=False, audio=False):
     """Return the environment dict for the chrooted exec (a copy of _GUEST_ENV).
 
     When *display* is set, add DISPLAY=:0 so GUI apps find termux-x11.
+    When *audio* is set, add PULSE_SERVER so apps play through Android audio.
     """
     env = dict(_GUEST_ENV)
     if display:
         env["DISPLAY"] = ":0"
+    if audio:
+        # The PulseAudio socket is bound at this in-container path (mounts.py).
+        env["PULSE_SERVER"] = "unix:/var/run/pulse/native"
     return env
 
 
@@ -387,6 +391,7 @@ def run_container(args, conn):
     # itself is never unshared — only the session child.
     use_mount_ns = args.get("mounts", True)
     use_display = args.get("shared_display", False)
+    use_audio = args.get("shared_audio", False)
 
     pid = os.fork()
     if pid == 0:
@@ -410,7 +415,7 @@ def run_container(args, conn):
                 try:
                     import mounts as mounts_mod
                     mounts_mod.enter_private_mount_ns()
-                    mounts_mod.setup_mounts(rootfs, x11=use_display)
+                    mounts_mod.setup_mounts(rootfs, x11=use_display, audio=use_audio)
                 except OSError as e:
                     # Fail safe: no mounts, chroot only. Tell the user why.
                     with contextlib.suppress(OSError):
@@ -447,13 +452,13 @@ def run_container(args, conn):
             if args.get("use_init"):
                 init_path = stage_init(rootfs)
                 if init_path:
-                    os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display))
+                    os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display, audio=use_audio))
                 # Fall through to plain exec if staging failed.
             # command[0] is absolute now (resolve_command_path), so execv skips
             # the PATH search that crashed on stripped chroots.
             if "/" in command[0]:
                 os.execv(command[0], command)
-            os.execvpe(command[0], command, _guest_env(display=use_display))
+            os.execvpe(command[0], command, _guest_env(display=use_display, audio=use_audio))
         except Exception as e:
             with contextlib.suppress(OSError):
                 os.write(2, f"exec failed: {e}\n".encode())
@@ -943,7 +948,7 @@ def exec_container(args, conn):
             try:
                 import mounts as mounts_mod
                 mounts_mod.enter_private_mount_ns()
-                mounts_mod.setup_mounts(rootfs, x11=args.get("shared_display", False))
+                mounts_mod.setup_mounts(rootfs, x11=args.get("shared_display", False), audio=args.get("shared_audio", False))
             except OSError:
                 pass
             # Optional box64: register x86_64 -> box64 in THIS namespace only.
@@ -963,12 +968,12 @@ def exec_container(args, conn):
             if args.get("use_init"):
                 init_path = stage_init(rootfs)
                 if init_path:
-                    os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=args.get("shared_display", False)))
+                    os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=args.get("shared_display", False), audio=args.get("shared_audio", False)))
             # command[0] is absolute now (resolve_command_path), so execv is
             # safe and skips the PATH search that crashed on stripped chroots.
             if "/" in command[0]:
                 os.execv(command[0], command)
-            os.execvpe(command[0], command, _guest_env(display=args.get("shared_display", False)))
+            os.execvpe(command[0], command, _guest_env(display=args.get("shared_display", False), audio=args.get("shared_audio", False)))
         except Exception as e:
             with contextlib.suppress(OSError):
                 os.write(2, f"exec failed: {e}\n".encode())

@@ -121,7 +121,7 @@ def _assert_safe_rootfs(rootfs):
         raise OSError(f"refusing to mount into rootfs outside {CONTAINERS_DIR}: {real}")
 
 
-def setup_mounts(rootfs, x11=False):
+def setup_mounts(rootfs, x11=False, audio=False):
     """Mount the standard pseudo-filesystem set into *rootfs*. Returns mount list.
 
     Order matters: parents before children. Each entry is recorded so teardown
@@ -133,6 +133,11 @@ def setup_mounts(rootfs, x11=False):
     in the SAME private mount namespace as everything else here, so it cannot
     propagate to the host (the whole reason this is safe where chroot-distro's
     --shared-display was not: we are in a verified-private namespace).
+
+    When *audio* is set, bind the host's PulseAudio socket into the container
+    and the client sets PULSE_SERVER, so container apps play through Android's
+    audio. Same private-namespace safety as x11 — the host's /dev/snd is never
+    touched (we route through PulseAudio, not raw ALSA).
 
     Refuses outright if *rootfs* is not under CONTAINERS_DIR (see
     _assert_safe_rootfs) — this must never bind host /dev onto a host path.
@@ -205,6 +210,24 @@ def setup_mounts(rootfs, x11=False):
             mount(src, dst, None, MS_BIND | MS_REC)
 
         _try(_x11, "tmp/.X11-unix")
+
+    # Audio (PulseAudio): bind the host's PulseAudio socket into the container
+    # so apps play through Android's audio. We route through PulseAudio (a
+    # userspace socket), NEVER raw ALSA — so the host's /dev/snd is untouched.
+    # Same private-namespace safety as x11. Skipped silently if PulseAudio
+    # isn't running (no socket yet).
+    if audio:
+        def _audio():
+            # Termux PulseAudio socket (native protocol).
+            src = "/data/data/com.termux/files/usr/var/run/pulse/native"
+            if not os.path.exists(src):
+                raise OSError("no host PulseAudio socket (is pulseaudio running?)")
+            dst_dir = os.path.join(rootfs, "var", "run", "pulse")
+            os.makedirs(dst_dir, exist_ok=True)
+            dst = os.path.join(dst_dir, "native")
+            mount(src, dst, None, MS_BIND)
+
+        _try(_audio, "var/run/pulse/native")
 
     return mounted
 
