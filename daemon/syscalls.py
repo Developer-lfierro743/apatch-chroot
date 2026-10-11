@@ -34,6 +34,11 @@ MS_REC = 16384
 MS_PRIVATE = 1 << 18
 MS_SLAVE = 1 << 19
 MS_SHARED = 1 << 20
+# Clear-flags for a suid/exec remount (turn OFF nosuid/noexec/nodav-like bits).
+# We pass these to remount so setuid binaries (sudo) execute inside containers.
+MS_NOSUID = 2
+MS_NODEV = 4
+MS_NOEXEC = 8
 
 # unshare(2) flags
 CLONE_NEWNS = 0x00020000

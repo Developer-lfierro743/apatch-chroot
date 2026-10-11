@@ -28,6 +28,7 @@ from syscalls import (
     MS_BIND,
     MS_PRIVATE,
     MS_REC,
+    MS_REMOUNT,
     mount,
     unshare,
 )
@@ -87,6 +88,23 @@ def _bind(src, dst):
     mount(src, dst, None, MS_BIND | MS_REC)
 
 
+def _remount_suid_exec(rootfs):
+    """Remount the rootfs with suid+exec so setuid binaries (sudo) work.
+
+    Android mounts /data (where our container rootfs lives) with nosuid (and
+    often noexec) as anti-root hardening. Those flags make setuid-root binaries
+    like sudo silently run as the caller (or refuse to run at all) — so sudo
+    appears "broken" inside a container for no visible reason.
+
+    We bind the rootfs onto itself, then remount it clearing nosuid/noexec,
+    INSIDE the container's private mount namespace. This change exists only in
+    this namespace — the host /data mount and Android's hardening are untouched
+    (same isolation guarantee as every other mount we make here).
+    """
+    mount(rootfs, rootfs, None, MS_BIND | MS_REC)
+    mount(rootfs, rootfs, None, MS_REMOUNT | MS_BIND)
+
+
 def _assert_safe_rootfs(rootfs):
     """Refuse to mount into a rootfs that is not one of our containers.
 
@@ -123,6 +141,11 @@ def setup_mounts(rootfs):
             return True
         except OSError:
             return False
+
+    # First: remount the rootfs itself with suid+exec so setuid binaries (sudo)
+    # execute inside the container. /data is nosuid on Android; without this,
+    # sudo silently fails to elevate. Namespace-scoped, host untouched.
+    _try(lambda: _remount_suid_exec(rootfs), "rootfs")
 
     # procfs (fresh, so the guest sees only its own processes where the kernel
     # supports a PID namespace; on Android it shows the host's, which is fine).
