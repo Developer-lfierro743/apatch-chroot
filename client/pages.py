@@ -28,6 +28,7 @@ TOP_COMMANDS = (
     ("pull", "Copy a file/dir out of a container to the host."),
     ("service", "Manage a container's services from the host (start/stop/enable/status)."),
     ("setuser", "Set a container's default login user (least privilege)."),
+    ("check-update", "Check GitHub for a newer release."),
     ("kill", "Stop a container and tear down its mounts."),
     ("remove", "Delete a container and its rootfs.", "!deletes all data — no undo"),
     ("info", "Show daemon and host capability status."),
@@ -277,6 +278,19 @@ HELP_PAGES = {
         ),
         "options": [("-h, --help", "Show this help.")],
         "examples": ["apatch-chroot info"],
+    },
+    "check-update": {
+        "usage": "check-update",
+        "summary": (
+            "Check GitHub for a newer release than the one you're running.\n\n"
+            "Compares the installed client version against the latest GitHub "
+            "release. If a newer one exists, prints the download link for the "
+            "module zip. Needs network access; if GitHub is unreachable it says "
+            "so and points you to the releases page manually.\n\n"
+            "Alias: 'update'. Exit code 1 means an update is available."
+        ),
+        "options": [("-h, --help", "Show this help.")],
+        "examples": ["apatch-chroot check-update"],
     },
     "service": {
         "usage": "service NAME VERB [UNIT]",

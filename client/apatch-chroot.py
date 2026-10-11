@@ -30,6 +30,10 @@ SOCKET_FALLBACKS = (
 )
 VERSION = "v0.3.0"
 PROGRAM = "apatch-chroot"
+# Where check-update looks for the latest release.
+GITHUB_REPO = "Developer-lfierro743/apatch-chroot"
+RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
 
 
 def connect(wait: bool = True, timeout: float = 20.0):
@@ -202,6 +206,46 @@ def cmd_info():
     print(f"    mount namespace:   {'yes' if caps.get('mount_namespace') else 'NO'}")
     print(f"    binfmt_misc:       {'yes' if caps.get('binfmt_misc') else 'no'} (for --box64)")
     print(f"    seccomp:           {seccomp_txt}")
+    return 0
+
+
+def _version_tuple(v):
+    """Turn 'v0.3.0' into (0, 3, 0) for comparison. Non-numeric parts -> 0."""
+    import re
+    nums = re.findall(r"\d+", v or "")
+    return tuple(int(n) for n in nums[:3]) or (0,)
+
+
+def cmd_check_update():
+    """Check GitHub for a newer release than the installed VERSION."""
+    import urllib.request
+    print(f"installed: {VERSION}")
+    try:
+        req = urllib.request.Request(
+            RELEASES_API, headers={"User-Agent": f"apatch-chroot/{VERSION}"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        # No network / GitHub unreachable — not fatal, just can't check.
+        print(f"could not check for updates: {e}")
+        print(f"check manually: {RELEASES_URL}")
+        return 0
+    latest = data.get("tag_name", "")
+    if not latest:
+        print("no release found upstream.")
+        return 0
+    if _version_tuple(latest) > _version_tuple(VERSION):
+        print(f"latest:    {latest}  ← UPDATE AVAILABLE")
+        # Point at the zip asset if the release has one.
+        for asset in data.get("assets", []):
+            if asset.get("name", "").endswith(".zip"):
+                print(f"download:  {asset.get('browser_download_url')}")
+                break
+        print(f"or visit:  {RELEASES_URL}")
+        print("then flash the zip in APatch and reboot.")
+        return 1
+    print(f"latest:    {latest}  — you're up to date.")
     return 0
 
 
@@ -558,6 +602,8 @@ def main(argv):
         return cmd_ping()
     if cmd == "info":
         return cmd_info()
+    if cmd in ("check-update", "update"):
+        return cmd_check_update()
     if cmd == "install":
         if len(args) < 2:
             print("usage: apatch-chroot install IMAGE [AS_NAME]", file=sys.stderr)
