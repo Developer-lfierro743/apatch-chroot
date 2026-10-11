@@ -25,7 +25,7 @@ import time
 SOCKET_PATH = "/data/local/tmp/apatch-chroot.sock"
 CONTAINERS_DIR = "/data/apatch-chroot/containers"
 # Keep in sync with client/apatch-chroot.py VERSION and module.prop.
-VERSION = "v0.4.0.6"
+VERSION = "v0.4.0.7"
 # Where the daemon records the version it last ran, to detect an update.
 STATE_DIR = "/data/apatch-chroot"
 # The broker (Termux-uid relay) exposes this socket for the core to dial.

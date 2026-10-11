@@ -472,18 +472,22 @@ def run_container(args, conn):
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display, audio=use_audio))
                 # Fall through to plain exec if staging failed.
-            # Login shell (bash -l / bare bash): use the wrapper so PATH/TERM
-            # survive profile sourcing. `bash -l` alone lets /etc/profile clobber
-            # the env, causing "command not found" + "TERM not set". The wrapper
-            # re-asserts our env last. Detect by command[0] being bash.
+            # Login shell (bash): exec it DIRECTLY with a clean env and flags
+            # that stop it re-poisoning PATH. The container's ~/.bashrc often
+            # does `export PATH=/system/bin:/apex/...` (a chroot-distro leftover),
+            # which makes ls/apt/bash "command not found". We defeat it two ways:
+            #   --norc --noprofile  → bash does NOT source ~/.bashrc or /etc/profile
+            #   a clean env passed to execve → PATH points at the container's own
+            #                              /usr/bin, /bin (where the tools live)
+            # This is done here, in the daemon, NOT via a wrapper script — because
+            # any wrapper that ends in `bash -i` just re-sources .bashrc and
+            # re-poisons PATH. Doing it at exec time is the only reliable fix.
             if command and command[0].endswith("bash"):
-                wrapper = stage_login_wrapper(rootfs)
-                if wrapper:
-                    env = _guest_env(display=use_display, audio=use_audio)
-                    # Pass the authoritative env to the wrapper as APATCH_ENV.
-                    env["APATCH_ENV"] = "\n".join(f"{k}={v}" for k, v in env.items() if k != "APATCH_ENV")
-                    os.execve("/bin/sh", ["/bin/sh", wrapper], env)
-                # Fall through to plain exec if staging failed.
+                env = _guest_env(display=use_display, audio=use_audio)
+                # Absolute PATH so bash finds coreutils even before .bashrc.
+                env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                os.execve("/bin/bash", ["/bin/bash", "--norc", "--noprofile", "-i"], env)
+                # (execve replaces the process; if it fails we fall through)
             # command[0] is absolute now (resolve_command_path), so execv skips
             # the PATH search that crashed on stripped chroots.
             if "/" in command[0]:
