@@ -1,4 +1,7 @@
-# Running Electron / Chromium apps
+---
+title: Electron / Chromium
+nav_order: 7
+---
 
 VSCode, Discord, and many modern apps are **Electron** — a bundled Chromium.
 They run in apatch-chroot, but Chromium's security model fights a chroot in two

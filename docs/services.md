@@ -1,4 +1,7 @@
-# Container services (mini-systemd)
+---
+title: Services (mini-systemd)
+nav_order: 4
+---
 
 Android has no systemd — only `init` (PID 1), which boots the phone. A bare
 chroot therefore has **no service manager**: sshd/dbus/cron don't auto-start,

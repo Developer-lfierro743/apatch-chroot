@@ -1,4 +1,7 @@
-# Architecture
+---
+title: Architecture
+nav_order: 2
+---
 
 Three processes, two Android walls, one design goal: run real Linux containers
 on Android without the host noticing.

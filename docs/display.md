@@ -1,4 +1,7 @@
-# GUI apps (termux-x11)
+---
+title: Display (termux-x11)
+nav_order: 5
+---
 
 Android has no X server, so GUI apps (xterm, editors, browsers) need one. On
 Android that's **termux-x11**, an X server that runs as an app.

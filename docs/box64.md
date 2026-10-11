@@ -1,4 +1,7 @@
-# Optional: x86_64 via box64
+---
+title: box64 (x86_64)
+nav_order: 9
+---
 
 box64 lets an arm64 device run x86_64 binaries by JIT-translating them to arm64
 on the fly. It's **opt-in**, not default, because box64's JIT is still unstable

@@ -1,0 +1,22 @@
+title: APatch Chroot
+description: Linux containers on rooted Android — without breaking the host
+theme: just-the-docs
+
+# GitHub Pages serves this from the /docs folder.
+url: https://developer-lfierro743.github.io
+baseurl: "/apatch-chroot"
+
+# Repo links in the header.
+aux_links:
+  "GitHub": "https://github.com/Developer-lfierro743/apatch-chroot"
+  "Releases": "https://github.com/Developer-lfierro743/apatch-chroot/releases"
+
+# Search + nav.
+search_enabled: true
+heading_anchors: true
+
+# Color scheme.
+color_scheme: dark
+
+# Footer.
+footer_content: "APatch Chroot — MIT licensed. Runs a root daemon; read <a href=\"/apatch-chroot/safety\">safety</a> first."

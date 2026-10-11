@@ -1,4 +1,7 @@
-# Wire protocol
+---
+title: Protocol
+nav_order: 10
+---
 
 How the client, broker, and core talk to each other. Newline-delimited JSON
 requests over a Unix socket, with framed payloads so raw PTY bytes can't be

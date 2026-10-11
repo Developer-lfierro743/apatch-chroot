@@ -1,4 +1,7 @@
-# Storage: install, convert, move
+---
+title: Storage & convert
+nav_order: 8
+---
 
 Three ways a container gets onto your device, and the disk-space math behind
 each.

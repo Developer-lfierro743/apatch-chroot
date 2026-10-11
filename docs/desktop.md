@@ -1,4 +1,7 @@
-# A full desktop (LXQt)
+---
+title: Desktop (LXQt)
+nav_order: 6
+---
 
 You can run a real Linux desktop inside a container on your phone. This guide
 sets up **LXQt** — lightweight and Qt-based, a good fit for a phone.

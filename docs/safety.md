@@ -1,4 +1,7 @@
-# Safety: why the Android host is never touched
+---
+title: Safety
+nav_order: 3
+---
 
 This is the whole reason apatch-chroot exists. Other chroot tools break the
 Android host — audio dies, mounts leak, ghost mounts accumulate. apatch-chroot
