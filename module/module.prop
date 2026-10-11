@@ -1,7 +1,7 @@
 id=apatch_chroot
 name=APatch Chroot
-version=v0.1.1
-versionCode=2
+version=v0.2.0
+versionCode=3
 author=Developer-lfierro743
-description=Run Linux containers on Android via a privileged daemon that bypasses the app seccomp filter. Docker Hub pull, private-namespace mounts (host audio stays intact), PTY shells. v0.1.1: atomic watchdog lock (no duplicate daemons), socket-fallback client, symlink-safe list.
+description=Run Linux containers on Android via a privileged daemon that bypasses the app seccomp filter. Docker Hub pull, private-namespace mounts (host audio stays intact), PTY shells. v0.2.0: mini-systemd container init (PID-1 supervisor with --init), systemctl hijack (Ubuntu service commands work), host-side 'service' command, optional box64 (per-container x86_64 via --box64), exec/clone/push/pull, atomic watchdog lock, socket-fallback client.
 sourceRepo=https://github.com/Developer-lfierro743/apatch-chroot
