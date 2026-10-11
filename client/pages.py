@@ -39,7 +39,12 @@ FRONT_NOTES = (
     "finish booting and Termux storage to unlock). Commands auto-wait up to 20s "
     "for it; if it is still not up, you will get a hint instead of an error.",
     "No root needed: the client talks to the privileged daemon over a unix socket.",
+    "Topics: 'apatch-chroot help display' (GUI/termux-x11) and "
+    "'apatch-chroot help storage' (convert/move/disk space).",
 )
+
+# Topic help pages (not commands): reachable via 'apatch-chroot help <topic>'.
+HELP_TOPICS = ("display", "storage")
 
 HELP_PAGES = {
     "convert": {
@@ -291,6 +296,69 @@ HELP_PAGES = {
             "apatch-chroot service ubuntu status sshd",
             "apatch-chroot service ubuntu is-active sshd",
             "apatch-chroot service ubuntu list-units",
+        ],
+    },
+    "display": {
+        "usage": "help display",
+        "summary": (
+            "Running GUI apps in a container (termux-x11).\n\n"
+            "Android has no X server, so GUI apps need termux-x11. The "
+            "--shared-display flag (alias --shared-x11) binds termux-x11's "
+            "socket into the container and sets DISPLAY=:0, so xterm and other "
+            "GUI apps reach the display.\n\n"
+            "The socket bind lives in the container's PRIVATE mount namespace, "
+            "so it cannot propagate to the host — Android's audio (/dev/snd) "
+            "and other mounts are untouched. This is the safe replacement for "
+            "chroot-distro's --shared-display, which broke host audio because "
+            "it lacked real isolation."
+        ),
+        "options": [],
+        "examples": [
+            "# 1. Install termux-x11 (once, in Termux):",
+            "pkg install x11-repo termux-x11-nightly",
+            "",
+            "# 2. Start the X server:",
+            "termux-x11 :0 &",
+            "",
+            "# 3. Run a GUI app in the container:",
+            "apatch-chroot login ubuntu --shared-display",
+            "xterm",
+            "",
+            "# or one-shot:",
+            "apatch-chroot run ubuntu --shared-display -- xterm",
+            "",
+            "# If a GUI app says 'cannot open display', check:",
+            "apatch-chroot info        # binfmt/namespace status",
+            "echo $DISPLAY             # should be :0 inside the container",
+        ],
+    },
+    "storage": {
+        "usage": "help storage",
+        "summary": (
+            "Moving and converting containers (disk space).\n\n"
+            "convert makes a FULL COPY of a container, so it needs free space "
+            "equal to the container's size (old + new both exist briefly). For "
+            "a container bigger than your free space, use --move instead.\n\n"
+            "--move RENAMES the container's rootfs on the same /data filesystem "
+            "— instant, zero extra space. The trade-off: the source container "
+            "is consumed (it becomes the destination). Both paths must be on "
+            "the same filesystem (they are: everything is under /data).\n\n"
+            "Check sizes before a big move: 'apatch-chroot list' shows each "
+            "container's size; 'df -h /data' shows free space."
+        ),
+        "options": [],
+        "examples": [
+            "# See what you have and how big:",
+            "apatch-chroot list",
+            "",
+            "# Copy a chroot-distro container in (needs free space = its size):",
+            "apatch-chroot convert ubuntu ubuntu-apatch",
+            "",
+            "# OR move it instantly, zero extra space (consumes the source):",
+            "apatch-chroot convert ubuntu --move",
+            "",
+            "# The chroot-distro source must be unmounted first (reboot if it",
+            "# complains about ghost mounts).",
         ],
     },
 }
