@@ -20,7 +20,7 @@ import socket
 import sys
 import threading
 
-SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock"
+SOCKET_PATH = "/data/local/tmp/apatch-chroot.sock"
 CONTAINERS_DIR = "/data/apatch-chroot/containers"
 
 
@@ -103,16 +103,10 @@ def main():
         pass
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCKET_PATH)
-    # The socket lives under Termux's own tree so the untrusted_app can reach
-    # it. Hand it to the app's uid (com.termux = 10481) so the client fully
-    # owns its own socket — a root-owned socket in the app's 0700 home can be
-    # listed but not reliably connected to by the app.
-    try:
-        import pwd
-        app_uid = pwd.getpwnam("u0_a481").pw_uid
-    except (KeyError, ImportError):
-        app_uid = 10481
-    os.chown(SOCKET_PATH, app_uid, app_uid)
+    # /data/local/tmp is shell_data_file context, which the untrusted_app
+    # (real Termux) can reach — unlike app-private storage reached only via
+    # the magisk su domain. 0666 lets the app connect; no chown needed here
+    # (chown-to-app-uid was only for the old app-private socket location).
     os.chmod(SOCKET_PATH, 0o666)
     srv.listen(8)
     print(f"apatch-chroot daemon listening on {SOCKET_PATH} (uid={os.getuid()})", flush=True)

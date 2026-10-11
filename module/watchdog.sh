@@ -15,7 +15,7 @@ MODDIR=/data/adb/modules/apatch_chroot
 DAEMON_DIR=/data/apatch-chroot/daemon
 DAEMON=$DAEMON_DIR/daemon.py
 PYTHON=/data/data/com.termux/files/usr/bin/python3
-SOCK=/data/data/com.termux/files/usr/tmp/apatch-chroot.sock
+SOCK=/data/local/tmp/apatch-chroot.sock
 LOG=$MODDIR/daemon.log
 LOCKDIR=$MODDIR/watchdog.lock
 

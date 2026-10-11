@@ -19,10 +19,13 @@ import time
 from pages import HELP_PAGES, TOP_COMMANDS, FRONT_NOTES
 from render import render_front, render_page, term_width
 
-SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock"
-# Older installs left the daemon on /dev; try it too so a stale client still
-# finds the daemon after an upgrade.
-SOCKET_FALLBACKS = ("/dev/apatch-chroot.sock",)
+SOCKET_PATH = "/data/local/tmp/apatch-chroot.sock"
+# Older installs left the socket in Termux app storage or /dev; try them too
+# so a stale client still finds the daemon after an upgrade.
+SOCKET_FALLBACKS = (
+    "/data/data/com.termux/files/usr/tmp/apatch-chroot.sock",
+    "/dev/apatch-chroot.sock",
+)
 VERSION = "v0.1.1"
 PROGRAM = "apatch-chroot"
 
