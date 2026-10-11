@@ -201,6 +201,35 @@ def _lookup_uid_gid(rootfs, user):
     return None
 
 
+def resolve_command_path(rootfs, command):
+    """Resolve command[0] to an absolute path INSIDE the rootfs.
+
+    os.execvpe does a PATH search that, in a minimal chroot, imports Python's
+    'warnings' module and dies with "No module named 'warnings'" — the bug that
+    made bare `exec ubuntu -- cat ...` fail. We avoid it by resolving the binary
+    ourselves against the guest's own PATH directories (checked on the host side,
+    before chroot) and then using execv with an absolute path.
+
+    Returns the (possibly rewritten) command list. If command[0] already has a
+    '/' (absolute or relative), or resolution fails, it's returned unchanged and
+    execv/execvpe will handle it (and report a clear error).
+    """
+    if not command:
+        return command
+    prog = command[0]
+    if "/" in prog:
+        return command  # already a path; leave it alone
+    # Standard guest PATH dirs (mirrors _GUEST_ENV PATH).
+    path_dirs = _GUEST_ENV["PATH"].split(":")
+    for d in path_dirs:
+        cand = os.path.join(rootfs, d.lstrip("/"), prog)
+        # Must be a real file (not a symlink into nowhere) and executable.
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            abs_in_guest = os.path.join(d, prog)
+            return [abs_in_guest, *command[1:]]
+    return command  # unresolved; let execvpe try (and fail clearly)
+
+
 def drop_privileges(rootfs, user, command):
     """After chroot, drop from root to *user* before exec.
 
@@ -338,6 +367,9 @@ def run_container(args, conn):
     rootfs = f"/data/apatch-chroot/containers/{name}/rootfs"
     if not os.path.isdir(rootfs):
         return {"ok": False, "error": f"container '{name}' not installed at {rootfs}"}
+    # Resolve a bare command name to an absolute path in the guest (avoids the
+    # execvpe PATH-lookup crash on stripped chroots — see resolve_command_path).
+    command = resolve_command_path(rootfs, command)
 
     def send_control(obj):
         payload = json.dumps(obj).encode()
@@ -417,6 +449,10 @@ def run_container(args, conn):
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display))
                 # Fall through to plain exec if staging failed.
+            # command[0] is absolute now (resolve_command_path), so execv skips
+            # the PATH search that crashed on stripped chroots.
+            if "/" in command[0]:
+                os.execv(command[0], command)
             os.execvpe(command[0], command, _guest_env(display=use_display))
         except Exception as e:
             with contextlib.suppress(OSError):
@@ -884,6 +920,9 @@ def exec_container(args, conn):
     if not os.path.isdir(rootfs):
         return {"ok": False, "error": f"no such container: {name}"}
     cwd = args.get("cwd") or "/"
+    # Resolve a bare command name to an absolute path in the guest (avoids the
+    # execvpe PATH-lookup crash on stripped chroots — see resolve_command_path).
+    command = resolve_command_path(rootfs, command)
 
     out_r, out_w = os.pipe()
     err_r, err_w = os.pipe()
@@ -925,6 +964,10 @@ def exec_container(args, conn):
                 init_path = stage_init(rootfs)
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=args.get("shared_display", False)))
+            # command[0] is absolute now (resolve_command_path), so execv is
+            # safe and skips the PATH search that crashed on stripped chroots.
+            if "/" in command[0]:
+                os.execv(command[0], command)
             os.execvpe(command[0], command, _guest_env(display=args.get("shared_display", False)))
         except Exception as e:
             with contextlib.suppress(OSError):

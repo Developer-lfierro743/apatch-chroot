@@ -28,7 +28,7 @@ SOCKET_FALLBACKS = (
     "/data/local/tmp/apatch-chroot.sock",
     "/dev/apatch-chroot.sock",
 )
-VERSION = "v0.2.0"
+VERSION = "v0.3.0"
 PROGRAM = "apatch-chroot"
 
 
