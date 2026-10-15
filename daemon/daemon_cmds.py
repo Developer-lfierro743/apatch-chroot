@@ -305,6 +305,32 @@ def _ensure_default_bashrc(rootfs):
         pass
 
 
+def _ensure_default_profile(rootfs):
+    """Drop a stock ~/.profile into the container if it has none.
+
+    A login shell (`bash -l`) reads ~/.profile (NOT ~/.bashrc directly), so
+    without this file the user's prompt/aliases from ~/.bashrc never load and
+    logins fall back to the bare 'bash-5.2#' default. This file chains the two
+    exactly like stock Ubuntu: source ~/.bashrc if the shell is bash. Never
+    overwrites an existing .profile (the user's own config wins). Best-effort.
+    """
+    dest = os.path.join(rootfs, "root", ".profile")
+    if os.path.isfile(dest):
+        return
+    content = (
+        "# ~/.profile — sourced by login shells (bash -l). Chain to ~/.bashrc\n"
+        "# so the user's prompt/aliases load, exactly like stock Ubuntu.\n"
+        "if [ -n \"$BASH_VERSION\" ] && [ -f \"$HOME/.bashrc\" ]; then\n"
+        "    . \"$HOME/.bashrc\"\n"
+        "fi\n"
+    )
+    try:
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(content)
+    except OSError:
+        pass
+
+
 def stage_login_wrapper(rootfs):
     """Copy the login wrapper into the rootfs so a login shell can't lose PATH.
 
@@ -492,24 +518,26 @@ def run_container(args, conn):
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display, audio=use_audio))
                 # Fall through to plain exec if staging failed.
             # Login shell (bash): exec it DIRECTLY with a clean env.
-            #   --rcfile /root/.bashrc  → sources ONLY the user's own bashrc
-            #       (permanent prompt + aliases), NEVER /etc/profile or
-            #       /etc/profile.d/chroot-profile.sh (the PATH poison). If the
-            #       file doesn't exist, bash silently skips it.
+            #   bash -l -i → a STANDARD Ubuntu login: sources /etc/profile,
+            #       which (since the chroot-distro leftovers in profile.d were
+            #       disabled and /etc/profile was replaced with the stock
+            #       version) is clean — no host PATH leaks, audio guard intact.
+            #       The user's own ~/.bashrc still loads via ~/.profile, so the
+            #       prompt + aliases survive. The container now behaves like a
+            #       normal Ubuntu system instead of a special-cased shell.
             #   clean env passed to execve → PATH points at the container's own
-            #       /usr/bin, /bin (where the tools live), so even before the
-            #       rcfile runs, coreutils resolve.
-            # This is the reliable fix: a user .bashrc gives a nice permanent
-            # prompt, while the chroot-distro profile files never run.
+            #       /usr/bin, /bin, so coreutils resolve even pre-profile.
+            # The old --rcfile workaround is gone: it was only needed while
+            # /etc/profile was poisoned. If a profile ever leaks again, the
+            # wrapper (login-wrapper.sh) and _GUEST_ENV still guard the PATH.
             if command and command[0].endswith("bash"):
                 env = _guest_env(display=use_display, audio=use_audio)
                 env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                # Ensure a ~/.bashrc exists (drop our default if none) so the
-                # login gets a nice prompt + aliases. The user can edit it.
+                # Ensure ~/.bashrc (+ a ~/.profile that sources it) exist so the
+                # login shell gets a nice prompt + aliases like stock Ubuntu.
                 _ensure_default_bashrc(rootfs)
-                rcfile = os.path.join(rootfs, "root", ".bashrc")
-                argv = ["/bin/bash", "--rcfile", rcfile if os.path.isfile(rcfile) else "/dev/null", "-i"]
-                os.execve("/bin/bash", argv, env)
+                _ensure_default_profile(rootfs)
+                os.execve("/bin/bash", ["/bin/bash", "-l", "-i"], env)
                 # (execve replaces the process; if it fails we fall through)
             # command[0] is absolute now (resolve_command_path), so execv skips
             # the PATH search that crashed on stripped chroots.
