@@ -44,7 +44,7 @@ apt-get install -y --no-install-recommends \
     dbus-x11 \
     lxqt-sudo \
     pcmanfm-qt \
-    FeatherPad \
+    featherpad \
     x11-utils \
     xdg-utils \
     fonts-dejavu \
