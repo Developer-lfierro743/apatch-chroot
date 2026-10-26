@@ -251,6 +251,36 @@ apatch-chroot service ubuntu is-active sshd   # exit 0/3 — scriptable
 apatch-chroot service ubuntu list-units
 ```
 
+## Login sessions — `loginctl`
+
+Inside the container, `loginctl` (staged alongside `systemctl`, real binary kept as `loginctl.real`) mirrors systemd's session tooling over a **filesystem session registry** — one JSON record per login in `/run/apatch-chroot/sessions/`. Every login registers itself (plain logins write their record right after chroot; `--init` logins are registered by the init supervisor). Records whose process died are pruned automatically on the next listing — logout needs no cleanup.
+
+```sh
+loginctl list-sessions        # SESSION  USER  STATE  SEAT  TTY  COMMAND
+loginctl list-users           # users with sessions + linger state
+loginctl list-seats           # seat0 (all container logins are local)
+
+loginctl show-session <id>    # Id/User/Leader/State/TTY/Created/... (KEY=value)
+loginctl session-status <id>  # human-readable block
+loginctl user-status luis     # user + their sessions
+
+loginctl terminate-session <id>   # SIGTERM the session leader
+loginctl terminate-user luis      # all of a user's sessions
+loginctl kill-session <id>        # same signal path, systemd-style name
+
+loginctl enable-linger luis   # see below
+loginctl disable-linger luis
+```
+
+### Linger: services that survive logout
+
+`enable-linger` has real behavior here: with linger on, when the login shell exits the init supervisor **leaves background services running** (sshd, a webapp, …) instead of stopping them. The next `login --init` adopts the running services via their pidfiles, and `apatch-chroot kill <name>` still stops the whole container. Without linger (the default), exit = stop services, as before.
+
+```sh
+loginctl enable-linger luis   # then log out — sshd keeps serving
+apatch-chroot kill ubuntu     # ...until you stop the container
+```
+
 ## Architecture
 
 | Path | Role |
@@ -261,6 +291,7 @@ apatch-chroot service ubuntu list-units
 | `daemon/syscalls.py` | ctypes mount/unshare/prctl helpers, capability constants + `HARDEN_DROP` set. |
 | `daemon/broker.py` | Termux-uid relay. Owns the `app_data_file` socket the CLI reaches; pairs CLI connections with core connections. |
 | `daemon/systemctl.py` | Python init supervisor + systemctl replacement (unit files, dependency order, control socket). MIT, clean-room. |
+| `daemon/loginctl.py` | Python loginctl replacement (session registry, terminate, linger). MIT, clean-room. |
 | `daemon/init.sh` | Legacy POSIX sh supervisor (fallback when the guest has no python3). |
 | `daemon/systemctl-shim.sh` | Legacy sh systemctl shim (same fallback path). |
 | `daemon/binfmt.py` | Optional box64: registers x86_64 → box64 via binfmt_misc, scoped to the container's private mount namespace. |
@@ -296,6 +327,8 @@ Inside a `--init` container, `systemctl` talks to the init over a chroot-local u
 python3 -m unittest test_systemctl -v   # 11 tests: parsing, dependency order +
                                         # cycles, enable/disable, degraded status,
                                         # live process start/stop, control socket
+python3 -m unittest test_loginctl -v    # 11 tests: registry round-trip, dead
+                                        # pruning, linger, terminate, output
 python3 test_mounts.py                  # live on-device harness (needs the
 python3 test_client.py                  #   deployed daemon + a container)
 python3 test_alpine.py                  #   — run AFTER flashing, on the phone
@@ -324,6 +357,7 @@ python3 test_alpine.py                  #   — run AFTER flashing, on the phone
 - [x] Container-owned DNS (Google + Cloudflare, marker-based)
 - [x] `ports` — LAN IP + listening ports (no-forwarding reachability)
 - [x] `--init` staging fix (was silently dead since introduction; 11 unit tests)
+- [x] `loginctl` — session registry, terminate/kill, linger (services survive logout)
 - [ ] Live on-device pass: `--init` boot + services + hardening sweep (v0.5.1 flash → reboot → verify)
 - [ ] Policy-routing so container traffic follows VPN apps
 - [ ] `/etc/resolv.conf.d/local.conf` override hook

@@ -405,6 +405,27 @@ def stage_init(rootfs):
                          os.path.join(local_bin, "apatch-init"))
             os.chmod(os.path.join(local_bin, "apatch-init"), 0o755)
 
+        # 1b) loginctl — sessions + linger (same python-or-skip pattern).
+        LOGINCTL_PY = os.path.join(_DAEMON_DIR, "loginctl.py")
+        if guest_python and os.path.isfile(LOGINCTL_PY):
+            shutil.copy2(LOGINCTL_PY,
+                         os.path.join(local_bin, "apatch-loginctl.py"))
+            os.chmod(os.path.join(local_bin, "apatch-loginctl.py"), 0o755)
+            LOGINCTL_WRAPPER = (
+                "#!/bin/sh\n"
+                "# apatch-chroot loginctl (sessions, linger).\n"
+                'exec python3 /usr/local/bin/apatch-loginctl.py "$@"\n'
+            )
+            for bindir in ("usr/bin", "bin"):
+                d = os.path.join(rootfs, bindir)
+                if os.path.isdir(d):
+                    ld = os.path.join(d, "loginctl")
+                    # Keep a real loginctl as loginctl.real if present.
+                    if os.path.exists(ld) and not os.path.exists(ld + ".real"):
+                        with contextlib.suppress(OSError):
+                            os.rename(ld, ld + ".real")
+                    _write(ld, LOGINCTL_WRAPPER)
+
         # 2) systemctl — intercepted by the replacement so unit-file driven
         #    calls talk to the mini-init instead of the real (non-functional)
         #    systemd.
@@ -623,6 +644,30 @@ def run_container(args, conn):
                 if warn:
                     with contextlib.suppress(OSError):
                         os.write(2, f"apatch-chroot: {warn}\n".encode())
+                # Register the login session for in-container `loginctl`
+                # (filesystem registry; dead-leader records are pruned
+                # automatically — no cleanup handshake). Only for plain
+                # logins: --init registers the session itself. Inline write
+                # (the daemon dir is invisible post-chroot, so no import).
+                if command and command[0].endswith("bash"):
+                    with contextlib.suppress(OSError):
+                        import json as _json
+                        import time as _time
+                        rundir = "/run/apatch-chroot"
+                        sdir = os.path.join(rundir, "sessions")
+                        os.makedirs(sdir, exist_ok=True)
+                        os.chmod(rundir, 0o777)
+                        os.chmod(sdir, 0o777)
+                        tty = ""
+                        with contextlib.suppress(OSError):
+                            tty = os.ttyname(0)
+                        with open(os.path.join(sdir, f"{os.getpid()}.json"), "w") as fh:
+                            _json.dump({"id": str(os.getpid()),
+                                        "user": eff_user,
+                                        "leader": os.getpid(),
+                                        "command": list(command),
+                                        "tty": tty,
+                                        "created": _time.time()}, fh)
             # With use_init, the container's PID 1 is our mini-init supervisor
             # (starts services, reaps zombies, runs the command as a child).
             # Android's own PID 1 is untouched — this runs in the child's

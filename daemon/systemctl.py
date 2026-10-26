@@ -23,6 +23,7 @@ over the unix socket /run/apatch-chroot/control.sock; status-style verbs
 degrade gracefully to pidfile//proc reads when the init is not running.
 """
 
+import contextlib
 import json
 import os
 import pwd
@@ -498,6 +499,14 @@ def run_init(command):
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGINT, on_term)
 
+    # loginctl integration (same directory, staged alongside): register the
+    # login session + honor linger. Best-effort; absent module = old behavior.
+    loginctl = None
+    try:
+        import loginctl as loginctl_mod
+        loginctl = loginctl_mod
+    except ImportError:
+        pass
     cmd_pid = None
     if command:
         cmd_pid = os.fork()
@@ -508,6 +517,15 @@ def run_init(command):
                 sys.stderr.write(f"apatch-chroot init: exec {command[0]}: {exc}\n")
                 os._exit(127)
         # session child lives its own life; init supervises everything
+        if loginctl:
+            try:
+                tty = os.ttyname(0)
+            except OSError:
+                tty = None
+            try:
+                loginctl.record_session(cmd_pid, "root", command, tty)
+            except OSError:
+                pass
 
     code = 0
     try:
@@ -526,10 +544,17 @@ def run_init(command):
             time.sleep(0.2)
     finally:
         stop_event.set()
-        # stop services in reverse start order
-        enabled_set = set(enabled)
-        for name in reversed([n for n in sup.pids if n in enabled_set]):
-            sup.stop_unit(name)
+        if cmd_pid is not None and loginctl:
+            with contextlib.suppress(Exception):
+                loginctl.remove_session(cmd_pid)
+        # stop services in reverse start order — UNLESS linger is enabled:
+        # then background services survive logout (the next --init login
+        # adopts them via their pidfiles; apatch-chroot kill still stops all).
+        keep_services = bool(loginctl and loginctl.any_linger())
+        if not keep_services:
+            enabled_set = set(enabled)
+            for name in reversed([n for n in sup.pids if n in enabled_set]):
+                sup.stop_unit(name)
         if cmd_pid is not None and sup.stop_all and code == 0:
             # shutting down: take the session child down with us
             try:
