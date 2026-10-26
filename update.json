@@ -1,6 +1,6 @@
 {
-  "version": "v0.4.0.8",
-  "versionCode": 13,
+  "version": "v0.5.4",
+  "versionCode": 19,
   "zipUrl": "https://github.com/Developer-lfierro743/apatch-chroot/releases/latest/download/apatch-chroot.zip",
-  "changelog": "https://github.com/Developer-lfierro743/apatch-chroot/releases/latest"
+  "changelog": "https://raw.githubusercontent.com/Developer-lfierro743/apatch-chroot/main/CHANGELOG.md"
 }
