@@ -27,7 +27,9 @@ So the broker LISTENS; both the CLI and the core connect IN to it. Protocol:
 The broker holds no privilege — pure byte relay. All real work stays in root.
 """
 
+import contextlib
 import os
+import signal
 import socket
 import threading
 
@@ -38,6 +40,7 @@ CORE_SOCKET = "/data/data/com.termux/files/usr/tmp/apatch-chroot-core.sock"
 
 _core_queue = []
 _cv = threading.Condition()
+_shutting_down = False
 
 
 def _pipe(a, b):
@@ -96,7 +99,22 @@ def _listen(path):
     return s
 
 
+def _cleanup_sockets():
+    """Unlink both broker sockets so the next start doesn't find stale ones.
+
+    On abrupt Android shutdown the broker process is SIGKILLed and these
+    sockets linger. A leftover socket file can cause the next broker (started
+    at next boot) to fail bind() with EADDRINUSE, or worse — a stale socket
+    in a weird state that the core dials but no one accepts. Removing both
+    here is idempotent and safe.
+    """
+    for path in (BROKER_SOCKET, CORE_SOCKET):
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+
+
 def main():
+    global _shutting_down
     os.makedirs(os.path.dirname(BROKER_SOCKET), exist_ok=True)
 
     # Two sockets: the CLI dials BROKER_SOCKET, the core dials CORE_SOCKET.
@@ -108,20 +126,51 @@ def main():
         flush=True,
     )
 
+    def _handle_signal(signum, frame):
+        """Set the shutdown flag; accept loops check it and exit.
+
+        We close the listening sockets from the main thread (the accept
+        loops are in other threads) so they wake from accept() with an
+        OSError, then exit. This avoids the abrupt-kill leak where stale
+        socket files survive a SIGKILL on shutdown.
+        """
+        global _shutting_down
+        _shutting_down = True
+        with contextlib.suppress(OSError):
+            cli_srv.close()
+        with contextlib.suppress(OSError):
+            core_srv.close()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(OSError):
+            signal.signal(sig, _handle_signal)
+
     def accept_core():
-        while True:
-            conn, _ = core_srv.accept()
+        while not _shutting_down:
+            try:
+                conn, _ = core_srv.accept()
+            except OSError:
+                break  # socket closed by signal handler
             with _cv:
                 _core_queue.append(conn)
                 _cv.notify()
 
     def accept_cli():
-        while True:
-            conn, _ = cli_srv.accept()
+        while not _shutting_down:
+            try:
+                conn, _ = cli_srv.accept()
+            except OSError:
+                break  # socket closed by signal handler
             threading.Thread(target=_handle_cli, args=(conn,), daemon=True).start()
 
     threading.Thread(target=accept_core, daemon=True).start()
     accept_cli()
+
+    # Signal handler closed the sockets; accept_cli() returned. Drain any
+    # in-flight relays briefly, then unlink the socket files so the next
+    # broker start (after a reboot) doesn't find stale ones.
+    _cleanup_sockets()
+    print("broker exiting cleanly", flush=True)
 
 
 if __name__ == "__main__":

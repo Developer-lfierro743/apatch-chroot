@@ -123,6 +123,12 @@ cleanup() {
 trap 'EXIT_CODE=130; cleanup' INT TERM
 trap 'cleanup' EXIT
 
+# On abrupt Android shutdown the init process can be SIGKILLed. That's OK —
+# the private mount namespace dies with it, so no teardown is needed. But if
+# we receive SIGTERM (e.g. the daemon's kill_container path), we want a clean
+# shutdown: stop services, reap the shell, exit with the shell's code. The
+# trap above handles both; EXIT_CODE defaults to 0 for a normal exit.
+
 # Supervise with a timed poll. `wait -n` returns immediately when there are
 # no unwaited children (POSIX sh), which would busy-loop and respawn a dead
 # service hundreds of times a second. Instead we sleep CHECK_INTERVAL between

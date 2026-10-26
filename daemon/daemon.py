@@ -17,6 +17,7 @@ chroot + PTY flow works end to end. OCI/Docker Hub pull comes next.
 import contextlib
 import json
 import os
+import signal
 import socket
 import sys
 import threading
@@ -33,11 +34,17 @@ STATE_DIR = "/data/apatch-chroot"
 # socket, so this is the bridge. See broker.py for the full SELinux rationale.
 BROKER_CORE_SOCKET = "/data/data/com.termux/files/usr/tmp/apatch-chroot-core.sock"
 
+# Set by main() on signal; register_relay() checks it to wind down cleanly.
+_shutting_down = False
+
 
 def _recv_line(conn):
     buf = b""
     while not buf.endswith(b"\n"):
-        chunk = conn.recv(4096)
+        try:
+            chunk = conn.recv(4096)
+        except OSError:
+            return None
         if not chunk:
             return None
         buf += chunk
@@ -128,6 +135,9 @@ def handle_request(req, conn):
     if cmd == "info":
         from daemon_cmds import host_info
         return {"ok": True, "data": host_info()}
+    if cmd == "ports":
+        from daemon_cmds import list_ports
+        return list_ports(req.get("args", {}))
     if cmd == "stats":
         from daemon_cmds import container_stats
         return {"ok": True, "data": container_stats(req.get("args", {}))}
@@ -152,17 +162,26 @@ def serve(conn):
             try:
                 resp = handle_request(req, conn)
             except Exception as e:
-                _send(conn, {"ok": False, "error": f"handler error: {e!r}"})
+                # If the client/broker is gone mid-write, don't let a
+                # BrokenPipeError escape — it's not an internal error.
+                try:
+                    _send(conn, {"ok": False, "error": f"handler error: {e!r}"})
+                except OSError:
+                    break
                 continue
             if resp is not None:
                 shutdown = resp.pop("_shutdown", False)
-                _send(conn, resp)
+                try:
+                    _send(conn, resp)
+                except OSError:
+                    break  # broker gone (abrupt shutdown) — exit this relay
                 if shutdown:
                     os._exit(0)
     except OSError:
         pass
     finally:
-        conn.close()
+        with contextlib.suppress(OSError):
+            conn.close()
 
 
 def main():
@@ -178,6 +197,20 @@ def main():
         flush=True,
     )
 
+    def _handle_signal(signum, frame):
+        """Set the shutdown flag; register_relay() loops check it and exits.
+
+        We do NOT sys.exit here — the relay threads are mid-socket and an
+        abrupt exit would leak the broker's relay pair. Setting the flag lets
+        each relay finish its current serve() and close cleanly.
+        """
+        global _shutting_down
+        _shutting_down = True
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(OSError):
+            signal.signal(sig, _handle_signal)
+
     def register_relay():
         """Keep a pool of connections to the broker ready to serve requests.
 
@@ -185,12 +218,14 @@ def main():
         connection must not kill the thread (that would permanently shrink the
         pool until the daemon restarts). Every path loops back to a fresh dial.
         """
-        while True:
+        while not _shutting_down:
             try:
                 conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 conn.connect(BROKER_CORE_SOCKET)
             except OSError as e:
                 # Broker not up yet (Termux not started, or booting). Retry.
+                if _shutting_down:
+                    break
                 print(f"broker not reachable ({e}); retrying in 3s", flush=True)
                 time.sleep(3)
                 continue
@@ -208,15 +243,25 @@ def main():
                 except OSError:
                     pass
             # serve() returned (broker closed the relay); open a fresh one.
+            if _shutting_down:
+                break
             time.sleep(0.2)
 
     # A small pool so a couple of concurrent CLI calls don't serialize.
+    threads = []
     for _ in range(4):
-        threading.Thread(target=register_relay, daemon=True).start()
+        t = threading.Thread(target=register_relay, daemon=True)
+        t.start()
+        threads.append(t)
 
-    # Block forever; the relay threads do the work.
-    while True:
-        time.sleep(3600)
+    # Wait for relay threads to wind down (they check _shutting_down each
+    # loop). On SIGTERM/SIGINT the flag is set; each thread exits its loop
+    # within one sleep interval, then this main() returns and the process
+    # exits cleanly. No abrupt kill, no leaked broker relays.
+    while any(t.is_alive() for t in threads):
+        time.sleep(0.5)
+
+    print("apatch-chroot core exiting cleanly", flush=True)
 
 
 if __name__ == "__main__":

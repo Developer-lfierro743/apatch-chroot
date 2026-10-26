@@ -392,26 +392,77 @@ def stage_init(rootfs):
         return None
 
 
+RESOLV_MARKER = "# managed by apatch-chroot - do not edit (override: /etc/resolv.conf.d/local.conf)"
+RESOLV_SERVERS = ("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1")
+
+
 def ensure_resolv_conf(rootfs):
-    """Write a working /etc/resolv.conf into the rootfs if it lacks nameservers.
+    """Install the container's own managed /etc/resolv.conf.
 
     Android has no /etc/resolv.conf (netd owns DNS via properties), so a fresh
     container image resolves nothing — apt/curl/cargo fail with "Temporary
-    failure resolving". We drop in public resolvers so the guest has DNS over
-    the daemon's (host) network. Skipped if the rootfs already has a usable
-    nameserver line, so a user's custom resolv.conf is preserved.
+    failure resolving". The container gets its OWN resolver configuration:
+    Google (8.8.8.8, 8.8.4.4) + Cloudflare (1.1.1.1, 1.0.0.1), written over
+    the guest's public networks, never tied to Android's netd.
+
+    Ownership rules:
+    - file carries our managed marker → rewritten fresh on every login (the
+      tool owns it; image updates and resolvconf packages can't stale it)
+    - file exists WITHOUT the marker but already has nameservers → it is the
+      user's own configuration; left untouched
+    - no file / no nameservers → adopted and written as managed
+    A resolvconf-style symlink (../run/resolvconf/resolv.conf) is replaced by
+    the managed regular file.
     """
     path = os.path.join(rootfs, "etc", "resolv.conf")
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        if os.path.isfile(path):
+        if os.path.islink(path):
+            os.unlink(path)  # resolvconf-style symlink → managed regular file
+        elif os.path.isfile(path):
             with open(path) as f:
-                if any(line.strip().startswith("nameserver") for line in f):
-                    return
+                content = f.read()
+            if RESOLV_MARKER in content:
+                pass  # ours: rewrite fresh below
+            elif any(line.strip().startswith("nameserver")
+                     for line in content.splitlines()):
+                return  # user's own working configuration: hands off
         with open(path, "w") as f:
-            f.write("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+            f.write(RESOLV_MARKER + "\n")
+            for ns in RESOLV_SERVERS:
+                f.write(f"nameserver {ns}\n")
     except OSError:
         pass
+
+
+def _apply_hardening(args):
+    """Drop host-dangerous capabilities from the bounding set (post-chroot).
+
+    One-way and inherited by every descendant — setuid/setcap inside the
+    container can never regain them. Guest root keeps everything it needs
+    INSIDE the container but can no longer: load host kernel modules, write
+    raw devices, reconfigure HOST networking (NET_ADMIN in the shared netns
+    would let it flush Android's firewall/routes), change the host clock,
+    reboot the host, mknod device nodes (would bypass the /dev masks), or
+    touch SELinux/BPF/syslog. Default ON; --no-harden opts out entirely;
+    --keep-sysadmin re-adds CAP_SYS_ADMIN for FUSE/AppImage users at the
+    cost of mount containment (guest root could unmount the danger masks).
+    Must be called as root, after chroot, before any setuid. Never raises.
+    """
+    if not args.get("hardened", True):
+        return
+    try:
+        import syscalls as syscalls_mod
+        caps = set(syscalls_mod.HARDEN_DROP)
+        if args.get("keep_sysadmin"):
+            caps.discard(syscalls_mod.CAP_SYS_ADMIN)
+        for cap in sorted(caps):
+            with contextlib.suppress(OSError):
+                syscalls_mod.drop_cap_from_bounding(cap)
+        with contextlib.suppress(OSError):
+            os.write(2, b"apatch-chroot: hardened (host-dangerous capabilities dropped)\n")
+    except Exception:
+        pass  # hardening is best-effort; never break the login
 
 
 def run_container(args, conn):
@@ -478,7 +529,10 @@ def run_container(args, conn):
                 try:
                     import mounts as mounts_mod
                     mounts_mod.enter_private_mount_ns()
-                    mounts_mod.setup_mounts(rootfs, x11=use_display, audio=use_audio)
+                    mounts_mod.setup_mounts(
+                        rootfs, x11=use_display, audio=use_audio,
+                        shared_storage=args.get("shared_storage", False),
+                    )
                 except OSError as e:
                     # Fail safe: no mounts, chroot only. Tell the user why.
                     with contextlib.suppress(OSError):
@@ -496,6 +550,7 @@ def run_container(args, conn):
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)
+            _apply_hardening(args)
             # Drop from root to the container's login user (least privilege).
             # --root forces root; otherwise use --user or the container default.
             # Only meaningful when NOT using --init (init is PID 1, must be root).
@@ -608,12 +663,62 @@ def _unregister_session(name, pid):
         _SESSIONS.pop(name, None)
 
 
+def list_ports(args):
+    """List listening TCP ports + the phone's LAN IP.
+
+    The container shares the kernel network namespace with Android, so a
+    service binding 0.0.0.0:<port> inside the chroot (a webapp, sshd, a game
+    server...) is reachable from the LAN on the phone's WiFi address — no
+    port forwarding needed. This surfaces the phone's IP and every LISTEN
+    socket on the shared netns so the user can see exactly what the outside
+    world can reach. Never raises.
+    """
+    import re
+    import subprocess
+
+    found = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                next(f)  # header
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 4 or parts[3] != "0A":  # 0A = LISTEN
+                        continue
+                    ip_hex, port_hex = parts[1].split(":")
+                    port = int(port_hex, 16)
+                    if len(ip_hex) == 8:
+                        raw = bytes.fromhex(ip_hex)
+                        ip = ".".join(str(raw[i]) for i in (3, 2, 1, 0))
+                    else:
+                        ip = "[v6]"
+                    found.add((ip, port))
+        except (OSError, ValueError):
+            continue
+    ip = None
+    try:
+        out = subprocess.run(
+            ["ip", "-4", "addr", "show", "wlan0"],
+            capture_output=True, text=True, timeout=5,
+        )
+        m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", out.stdout)
+        if m:
+            ip = m.group(1)
+    except Exception:
+        pass
+    ports = [{"ip": i, "port": p} for i, p in sorted(found, key=lambda t: (t[1], t[0]))]
+    return {"ok": True, "data": {"ip": ip, "ports": ports}}
+
+
 def kill_container(args):
     """Stop a container's running sessions: SIGTERM, grace, then SIGKILL.
 
     args: {"name"}. Returns the pids that were signalled. The session's
     run_container loop reaps the child and tears down its private mount
     namespace on exit, so killing the pid is enough — nothing to unmount.
+
+    First reaps any orphaned (dead) pids so a stale entry never causes a
+    spurious signal to a recycled pid.
     """
     import signal
     import time
@@ -621,6 +726,7 @@ def kill_container(args):
     name = args.get("name")
     if not name:
         return {"ok": False, "error": "kill requires a name"}
+    _reap_orphaned_sessions()
     pids = list(_SESSIONS.get(name, []))
     if not pids:
         return {"ok": True, "data": {"killed": [], "note": "no running sessions"}}
@@ -651,6 +757,22 @@ def _pid_alive(pid):
         return False
 
 
+def _reap_orphaned_sessions():
+    """Drop any session pid that is no longer alive.
+
+    Called at the start of kill_container and container_stats so a session
+    whose child died without the run_container loop noticing (abrupt
+    SIGKILL of the daemon, or a zombie that was never reaped) does not linger
+    in _SESSIONS and confuse `kill` into signalling a dead pid.
+    """
+    for name in list(_SESSIONS.keys()):
+        alive = [p for p in _SESSIONS.get(name, []) if _pid_alive(p)]
+        if alive:
+            _SESSIONS[name] = alive
+        else:
+            _SESSIONS.pop(name, None)
+
+
 def container_stats(args):
     """Report disk usage + running sessions per container.
 
@@ -658,6 +780,7 @@ def container_stats(args):
     source image. Genuinely useful for a container tool — see at a glance what's
     eating disk and what's currently running. Never raises.
     """
+    _reap_orphaned_sessions()
     out = []
     if not os.path.isdir(CONTAINERS_DIR):
         return {"containers": []}
@@ -1063,7 +1186,11 @@ def exec_container(args, conn):
             try:
                 import mounts as mounts_mod
                 mounts_mod.enter_private_mount_ns()
-                mounts_mod.setup_mounts(rootfs, x11=args.get("shared_display", False), audio=args.get("shared_audio", False))
+                mounts_mod.setup_mounts(
+                    rootfs, x11=args.get("shared_display", False),
+                    audio=args.get("shared_audio", False),
+                    shared_storage=args.get("shared_storage", False),
+                )
             except OSError:
                 pass
             # Optional box64: register x86_64 -> box64 in THIS namespace only.
@@ -1074,6 +1201,7 @@ def exec_container(args, conn):
             ensure_resolv_conf(rootfs)
             os.chroot(rootfs)
             os.chdir(cwd)
+            _apply_hardening(args)
             # Drop from root to the container's login user (least privilege).
             if not args.get("use_init"):
                 eff_user = "root" if args.get("as_root") else (

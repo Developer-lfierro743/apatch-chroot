@@ -485,10 +485,10 @@ def cmd_kill(name):
     return 1
 
 
-def cmd_exec(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False, shared_audio=False):
+def cmd_exec(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False, shared_audio=False, shared_storage=False, hardened=True, keep_sysadmin=False):
     """Run a command non-interactively; print its output and exit code."""
     s = connect()
-    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio}})
+    request(s, {"cmd": "exec", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio, "shared_storage": shared_storage, "hardened": hardened, "keep_sysadmin": keep_sysadmin}})
     resp = read_control_line(s)
     s.close()
     if not resp or not resp.get("ok"):
@@ -583,9 +583,9 @@ def cmd_setuser(name, user):
     return 1
 
 
-def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False, shared_audio=False):
+def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False, shared_audio=False, shared_storage=False, hardened=True, keep_sysadmin=False):
     s = connect()
-    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio}})
+    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio, "shared_storage": shared_storage, "hardened": hardened, "keep_sysadmin": keep_sysadmin}})
     import termios
     import tty
 
@@ -653,8 +653,26 @@ class _suppress:
 
 
 # Flags shared by run/login/exec. Boolean flags have no value; --user takes one.
-_BOOL_FLAGS = ("--init", "--box64", "--root", "--shared-display", "--shared-x11")
+_BOOL_FLAGS = ("--init", "--box64", "--root", "--shared-display", "--shared-x11",
+               "--shared-storage", "--no-harden", "--keep-sysadmin")
 _VALUE_FLAGS = ("--user",)
+
+
+def cmd_ports():
+    """Show the phone's LAN IP + every listening TCP port (chroot services
+    like a webapp binding 0.0.0.0 are reachable from the LAN on these)."""
+    s = connect()
+    resp = request(s, {"cmd": "ports", "args": {}}) or {}
+    data = (resp.get("data") or {})
+    ip = data.get("ip")
+    ports = data.get("ports") or []
+    print(f"phone LAN IP: {ip or 'unknown (wifi down?)'}")
+    if ip:
+        print(f"from outside:  http://{ip}:<port>   (chroot binds 0.0.0.0)")
+    print(f"{len(ports)} listening TCP socket(s):")
+    for p in ports:
+        print(f"  {p['ip']}:{p['port']}")
+    return 0
 
 
 def parse_session_flags(rest):
@@ -670,6 +688,9 @@ def parse_session_flags(rest):
         "as_root": False,
         "shared_display": False,
         "shared_audio": False,
+        "shared_storage": False,
+        "hardened": True,
+        "keep_sysadmin": False,
         "user": None,
     }
     cmd = []
@@ -680,6 +701,12 @@ def parse_session_flags(rest):
             opts["shared_display"] = True
         elif a in ("--shared-audio", "--shared-sound"):
             opts["shared_audio"] = True
+        elif a == "--shared-storage":
+            opts["shared_storage"] = True
+        elif a == "--no-harden":
+            opts["hardened"] = False
+        elif a == "--keep-sysadmin":
+            opts["keep_sysadmin"] = True
         elif a == "--init":
             opts["use_init"] = True
         elif a == "--box64":
@@ -804,7 +831,7 @@ def main(argv):
     if cmd == "login":
         if len(args) < 2:
             print("usage: apatch-chroot login <name> [flags]", file=sys.stderr)
-            print("  flags: --init --box64 --shared-display(--shared-x11) --shared-audio --user U --root", file=sys.stderr)
+            print("  flags: --init --box64 --shared-display(--shared-x11) --shared-audio --shared-storage --user U --root", file=sys.stderr)
             return 2
         name = args[1]
         opts, _command = parse_session_flags(args[2:])
@@ -812,6 +839,8 @@ def main(argv):
         # sets a proper prompt (not the bare 'root@localhost:/#'), PATH, etc.
         # This is what makes 'login' feel like logging into a real machine.
         return cmd_run(name, ["/bin/bash", "-l"], **opts)
+    if cmd == "ports":
+        return cmd_ports()
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 

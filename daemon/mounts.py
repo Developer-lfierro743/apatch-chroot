@@ -29,6 +29,7 @@ from syscalls import (
     MS_PRIVATE,
     MS_REC,
     MS_REMOUNT,
+    MS_RDONLY,
     mount,
     unshare,
 )
@@ -121,7 +122,7 @@ def _assert_safe_rootfs(rootfs):
         raise OSError(f"refusing to mount into rootfs outside {CONTAINERS_DIR}: {real}")
 
 
-def setup_mounts(rootfs, x11=False, audio=False):
+def setup_mounts(rootfs, x11=False, audio=False, shared_storage=False):
     """Mount the standard pseudo-filesystem set into *rootfs*. Returns mount list.
 
     Order matters: parents before children. Each entry is recorded so teardown
@@ -138,6 +139,20 @@ def setup_mounts(rootfs, x11=False, audio=False):
     and the client sets PULSE_SERVER, so container apps play through Android's
     audio. Same private-namespace safety as x11 — the host's /dev/snd is never
     touched (we route through PulseAudio, not raw ALSA).
+
+    When *shared_storage* is set, bind Android's shared storage (the raw
+    /data/media/0 backing store, FUSE /storage/emulated/0 as fallback) at
+    /mnt/sdcard inside the container, with a /sdcard convenience symlink.
+
+    Containment hardening (v0.5.0), all namespace-scoped so the host mount
+    table is never touched:
+      - /proc mounted with subset=pid (+hidepid=2 fallback): the guest — even
+        as root — sees only its own process tree, never host processes.
+      - /sys bound READ-ONLY: guest root cannot write sysfs (no driver
+        unbinds, no kernel knob changes).
+      - /dev/block and /dev/socket masked with an empty read-only tmpfs:
+        no block devices (no bricking via dd) and no Android property/logd
+        control sockets reachable from inside.
 
     Refuses outright if *rootfs* is not under CONTAINERS_DIR (see
     _assert_safe_rootfs) — this must never bind host /dev onto a host path.
@@ -158,15 +173,54 @@ def setup_mounts(rootfs, x11=False, audio=False):
     # sudo silently fails to elevate. Namespace-scoped, host untouched.
     _try(lambda: _remount_suid_exec(rootfs), "rootfs")
 
-    # procfs (fresh, so the guest sees only its own processes where the kernel
-    # supports a PID namespace; on Android it shows the host's, which is fine).
-    _try(lambda: mount("proc", os.path.join(rootfs, "proc"), "proc", 0), "proc")
+    # procfs (fresh). Containment ladder, best first:
+    #   subset=pid    — the mount shows ONLY the mounting process's tree, even
+    #                   to root inside. The guest cannot see host processes.
+    #   hidepid=2     — non-root guests see only their own processes (older
+    #                   kernels; root still sees everything, accepted fallback).
+    #   plain proc    — last resort (very old kernels).
+    def _proc(opts):
+        mount("proc", os.path.join(rootfs, "proc"), "proc", 0, opts)
 
-    # sysfs: bind the host's /sys so the guest sees real hardware.
-    _try(lambda: _bind("/sys", os.path.join(rootfs, "sys")), "sys")
+    if not _try(lambda: _proc("subset=pid"), "proc"):
+        if not _try(lambda: _proc("hidepid=2"), "proc"):
+            _try(lambda: _proc(""), "proc")
+
+    # sysfs: bind the host's /sys so the guest sees real hardware — READ-ONLY.
+    # A read-write sysfs would let guest root unbind drivers or flip kernel
+    # knobs on the live host. The RO remount is namespace-scoped.
+    def _sys_ro():
+        _bind("/sys", os.path.join(rootfs, "sys"))
+        mount("/sys", os.path.join(rootfs, "sys"), None,
+              MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC)
+
+    _try(_sys_ro, "sys")
 
     # /dev: bind the host's /dev so the guest gets null/zero/random/snd/dri.
     _try(lambda: _bind("/dev", os.path.join(rootfs, "dev")), "dev")
+
+    # Danger masks (read-only empty tmpfs over the hostile subtrees):
+    #   /dev/block   — every host block device lives here; writable from guest
+    #                  root it is a one-command brick (dd to mmcblk0).
+    #   /dev/socket  — Android's control sockets (property_service lets root
+    #                  set HOST system properties, logd, netd...).
+    # The guest cannot create its way around these: mknod and SYS_ADMIN are
+    # dropped from the capability bounding set before exec (see daemon_cmds).
+    def _mask(rel):
+        dst = os.path.join(rootfs, "dev", rel)
+        os.makedirs(dst, exist_ok=True)
+        mount("tmpfs", dst, "tmpfs", MS_RDONLY, "mode=000,size=4k")
+
+    def _mask_block():
+        if os.path.isdir(os.path.join(rootfs, "dev", "block")):
+            _mask("block")
+
+    def _mask_socket():
+        if os.path.isdir(os.path.join(rootfs, "dev", "socket")):
+            _mask("socket")
+
+    _try(_mask_block, "dev/block (masked)")
+    _try(_mask_socket, "dev/socket (masked)")
 
     # /dev/pts: a fresh devpts instance. newinstance keeps the host's pty pool
     # untouched; ptmxmode=0666 lets any uid allocate a pty (the fix for
@@ -231,6 +285,33 @@ def setup_mounts(rootfs, x11=False, audio=False):
             mount(src, dst, None, MS_BIND)
 
         _try(_audio, "var/run/pulse/native")
+
+    # Shared storage: Android's shared storage at /mnt/sdcard (+ /sdcard
+    # symlink). Source ladder prefers the RAW backing store /data/media/0
+    # (no FUSE recursion, stable ownership) and falls back to the FUSE view
+    # /storage/emulated/0. Bind is recursive so per-user FUSE submounts come
+    # along. Read-write: files created by the guest appear to Android apps
+    # through the FUSE view's synthesized ownership.
+    if shared_storage:
+        def _sdcard():
+            src = None
+            for cand in ("/data/media/0", "/storage/emulated/0", "/sdcard"):
+                if os.path.isdir(cand):
+                    src = cand
+                    break
+            if src is None:
+                raise OSError("no Android shared storage found")
+            dst = os.path.join(rootfs, "mnt", "sdcard")
+            os.makedirs(dst, exist_ok=True)
+            mount(src, dst, None, MS_BIND | MS_REC)
+            link = os.path.join(rootfs, "sdcard")
+            if not os.path.lexists(link):
+                try:
+                    os.symlink("/mnt/sdcard", link)
+                except OSError:
+                    pass  # symlink is cosmetic; the bind is what matters
+
+        _try(_sdcard, "mnt/sdcard")
 
     return mounted
 
