@@ -3,6 +3,12 @@ title: Services (mini-systemd)
 nav_order: 4
 ---
 
+> **v0.5.x replaced this whole design.** The sh supervisor + `services.conf`
+> are now the no-python3 fallback; the real deal is the Modified systemd
+> suite (Python init supervisor, unit files, systemctl/loginctl/journalctl).
+> Read **[What the flip is the new systemd?](new-systemd)** — this page
+> stays for the legacy path.
+
 Android has no systemd — only `init` (PID 1), which boots the phone. A bare
 chroot therefore has **no service manager**: sshd/dbus/cron don't auto-start,
 and orphaned zombies are never reaped. apatch-chroot ships a tiny, purpose-built
