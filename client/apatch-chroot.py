@@ -17,7 +17,8 @@ import socket
 import sys
 import time
 
-from pages import HELP_PAGES, TOP_COMMANDS, FRONT_NOTES
+from pages import (HELP_PAGES, TOP_COMMANDS, FRONT_NOTES, TOP_COMMANDS_PAGE2,
+                   FRONT_NOTES_PAGE2)
 from render import render_front, render_page, term_width
 
 SOCKET_PATH = "/data/data/com.termux/files/usr/tmp/apatch-chroot-broker.sock"
@@ -29,7 +30,7 @@ SOCKET_FALLBACKS = (
     "/data/local/tmp/apatch-chroot.sock",
     "/dev/apatch-chroot.sock",
 )
-VERSION = "v0.4.0.8"
+VERSION = "v0.5.4"
 PROGRAM = "apatch-chroot"
 # Where check-update looks for the latest release.
 GITHUB_REPO = "Developer-lfierro743/apatch-chroot"
@@ -730,8 +731,15 @@ def main(argv):
     # Help interception: --help / -h / no command, before any dispatch.
     args = argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
-        if len(args) >= 2 and args[1] in HELP_PAGES:
-            render_page(args[1], HELP_PAGES[args[1]], term_width())
+        rest = args[1:] if args else []
+        if rest and rest[0] in HELP_PAGES:
+            render_page(rest[0], HELP_PAGES[rest[0]], term_width())
+        elif "2" in rest or ("--page" in rest and rest[rest.index("--page") + 1:
+                                                    rest.index("--page") + 2] == ["2"]):
+            # Page 2: the v0.5.x surface — flags, hardening hatches, the
+            # in-container systemd suite (systemctl/loginctl/journalctl).
+            render_front(PROGRAM, VERSION, TOP_COMMANDS_PAGE2, term_width(),
+                         notes=FRONT_NOTES_PAGE2)
         else:
             render_front(PROGRAM, VERSION, TOP_COMMANDS, term_width(), notes=FRONT_NOTES)
         return 0

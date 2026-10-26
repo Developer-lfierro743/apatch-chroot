@@ -1,7 +1,7 @@
 id=apatch_chroot
 name=APatch Chroot
-version=v0.5.3
-versionCode=18
+version=v0.5.4
+versionCode=19
 author=Developer-lfierro743
 description=Run Linux containers on Android via a privileged daemon that bypasses the app seccomp filter. Docker Hub pull, private-namespace mounts with host hardening (RO /sys, masked /dev/block+/dev/socket, capability drops, subset=pid proc), --shared-storage, container-owned DNS (Google+Cloudflare), PTY shells, mini-systemd init + systemctl shim, --shared-display (termux-x11) + --shared-audio, ports (LAN reachability), setuser least privilege, convert --move, optional box64.
 updateJson=https://raw.githubusercontent.com/Developer-lfierro743/apatch-chroot/update/apatch-chroot-update.json

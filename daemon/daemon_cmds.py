@@ -285,7 +285,12 @@ def _lookup_uid_gid_pw(user):
 # the daemon and staged into each container as needed.
 _DAEMON_DIR = os.path.dirname(os.path.abspath(__file__))
 INIT_SCRIPT = os.path.join(_DAEMON_DIR, "init.sh")
-SYSTEMCTL_PY = os.path.join(_DAEMON_DIR, "systemctl.py")
+# The "Modified systemd" suite (our custom systemd for Android chroots):
+# init supervisor + systemctl, loginctl, journald — staged into guests.
+SYSTEMD_DIR = os.path.abspath(os.path.join(_DAEMON_DIR, "..", "systemd"))
+SYSTEMCTL_PY = os.path.join(SYSTEMD_DIR, "systemctl.py")
+LOGINCTL_PY = os.path.join(SYSTEMD_DIR, "loginctl.py")
+JOURNALD_PY = os.path.join(SYSTEMD_DIR, "journald.py")
 SYSTEMCTL_SHIM = os.path.join(_DAEMON_DIR, "systemctl-shim.sh")
 LOGIN_WRAPPER = os.path.join(_DAEMON_DIR, "login-wrapper.sh")
 DEFAULT_BASHRC = os.path.join(_DAEMON_DIR, "default-bashrc")
@@ -406,7 +411,6 @@ def stage_init(rootfs):
             os.chmod(os.path.join(local_bin, "apatch-init"), 0o755)
 
         # 1b) loginctl — sessions + linger (same python-or-skip pattern).
-        LOGINCTL_PY = os.path.join(_DAEMON_DIR, "loginctl.py")
         if guest_python and os.path.isfile(LOGINCTL_PY):
             shutil.copy2(LOGINCTL_PY,
                          os.path.join(local_bin, "apatch-loginctl.py"))
@@ -425,6 +429,26 @@ def stage_init(rootfs):
                         with contextlib.suppress(OSError):
                             os.rename(ld, ld + ".real")
                     _write(ld, LOGINCTL_WRAPPER)
+
+        # 1c) journalctl — the journal query tool (reads service logs +
+        #     structured lifecycle events; no daemon needed).
+        if guest_python and os.path.isfile(JOURNALD_PY):
+            shutil.copy2(JOURNALD_PY,
+                         os.path.join(local_bin, "apatch-journald.py"))
+            os.chmod(os.path.join(local_bin, "apatch-journald.py"), 0o755)
+            JOURNALCTL_WRAPPER = (
+                "#!/bin/sh\n"
+                "# apatch-chroot journalctl (query the container journal).\n"
+                'exec python3 /usr/local/bin/apatch-journald.py "$@"\n'
+            )
+            for bindir in ("usr/bin", "bin"):
+                d = os.path.join(rootfs, bindir)
+                if os.path.isdir(d):
+                    jd = os.path.join(d, "journalctl")
+                    if os.path.exists(jd) and not os.path.exists(jd + ".real"):
+                        with contextlib.suppress(OSError):
+                            os.rename(jd, jd + ".real")
+                    _write(jd, JOURNALCTL_WRAPPER)
 
         # 2) systemctl — intercepted by the replacement so unit-file driven
         #    calls talk to the mini-init instead of the real (non-functional)

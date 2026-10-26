@@ -1,0 +1,29 @@
+# Hermes Agent Gateway — the first service in our Modified systemd.
+#
+# Place at the spot systemd uses: /etc/systemd/system/hermes-gateway.service
+#   apatch-chroot push ubuntu examples/hermes-gateway.service \
+#       /etc/systemd/system/hermes-gateway.service
+#   apatch-chroot exec ubuntu -- systemctl enable hermes-gateway
+# (or leave disabled and start it manually with `systemctl start`)
+#
+# Paths follow the standard Hermes Agent install layout inside the chroot.
+# Adjust ExecStart/WorkingDirectory if your hermes-agent lives elsewhere.
+
+[Unit]
+Description=Hermes Agent Gateway Service
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/root/.hermes/hermes-agent
+Environment="HOME=/root"
+Environment="PATH=/root/.hermes/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/root/.hermes/hermes-agent/venv/bin/hermes gateway run
+# Always-on: if the gateway crashes it comes back after 10s (bounded to
+# MAX_RESTARTS attempts per supervisor session).
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

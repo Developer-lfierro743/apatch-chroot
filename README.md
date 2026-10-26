@@ -290,8 +290,9 @@ apatch-chroot kill ubuntu     # ...until you stop the container
 | `daemon/mounts.py` | The fortress: private mount namespace, `/proc subset=pid`, RO `/sys`, `/dev` masks, shared-storage binds, teardown ordering. |
 | `daemon/syscalls.py` | ctypes mount/unshare/prctl helpers, capability constants + `HARDEN_DROP` set. |
 | `daemon/broker.py` | Termux-uid relay. Owns the `app_data_file` socket the CLI reaches; pairs CLI connections with core connections. |
-| `daemon/systemctl.py` | Python init supervisor + systemctl replacement (unit files, dependency order, control socket). MIT, clean-room. |
-| `daemon/loginctl.py` | Python loginctl replacement (session registry, terminate, linger). MIT, clean-room. |
+| `systemd/systemctl.py` | **Modified systemd**: init supervisor (PID 1 in the chroot) + systemctl client — unit files, dependency order, RestartSec, control socket. MIT, clean-room. |
+| `systemd/loginctl.py` | Sessions (registry, terminate/kill), linger (services survive logout). MIT, clean-room. |
+| `systemd/journald.py` | The journal: service logs + lifecycle events (`journal.jsonl`), queried by `journalctl` (-u/-f/-n/-r/-S/-U). MIT, clean-room. |
 | `daemon/init.sh` | Legacy POSIX sh supervisor (fallback when the guest has no python3). |
 | `daemon/systemctl-shim.sh` | Legacy sh systemctl shim (same fallback path). |
 | `daemon/binfmt.py` | Optional box64: registers x86_64 → box64 via binfmt_misc, scoped to the container's private mount namespace. |
@@ -329,6 +330,8 @@ python3 -m unittest test_systemctl -v   # 11 tests: parsing, dependency order +
                                         # live process start/stop, control socket
 python3 -m unittest test_loginctl -v    # 11 tests: registry round-trip, dead
                                         # pruning, linger, terminate, output
+python3 -m unittest test_journald -v    # 9 tests: journal events, merge + unit
+                                        # filter, since/until, CLI flags
 python3 test_mounts.py                  # live on-device harness (needs the
 python3 test_client.py                  #   deployed daemon + a container)
 python3 test_alpine.py                  #   — run AFTER flashing, on the phone
@@ -358,7 +361,8 @@ python3 test_alpine.py                  #   — run AFTER flashing, on the phone
 - [x] `ports` — LAN IP + listening ports (no-forwarding reachability)
 - [x] `--init` staging fix (was silently dead since introduction; 11 unit tests)
 - [x] `loginctl` — session registry, terminate/kill, linger (services survive logout)
-- [ ] Live on-device pass: `--init` boot + services + hardening sweep (v0.5.1 flash → reboot → verify)
+- [x] **Modified systemd folder** — the suite lives in `systemd/` (component map: what's needed to run systemd → ours); `journald.py`/`journalctl` added; `RestartSec=` supported
+- [ ] Live on-device pass: `--init` boot + services + hardening sweep (flash → reboot → verify)
 - [ ] Policy-routing so container traffic follows VPN apps
 - [ ] `/etc/resolv.conf.d/local.conf` override hook
 

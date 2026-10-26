@@ -35,6 +35,19 @@ import sys
 import threading
 import time
 
+# journald (same directory, staged alongside) — lifecycle events into the
+# journal. Optional: absent module = services still log to their files.
+try:
+    import journald as journald_mod
+except ImportError:
+    journald_mod = None
+
+
+def _journal(unit, event, pid=None, code=None):
+    if journald_mod is not None:
+        with contextlib.suppress(OSError):
+            journald_mod.log_event(unit, event, pid=pid, code=code)
+
 UNIT_DIR = os.environ.get("APATCH_UNIT_DIR", "/etc/systemd/system")
 WANT_SUBDIR = os.path.join("multi-user.target.wants")
 RUNDIR = os.environ.get("APATCH_RUNDIR", "/run/apatch-chroot")
@@ -52,7 +65,7 @@ ACTIVE, INACTIVE, FAILED = "active", "inactive", "failed"
 class Unit:
     __slots__ = ("name", "path", "description", "after", "wants", "requires",
                  "type", "exec_start", "cwd", "env", "env_file", "user",
-                 "restart", "pidfile")
+                 "restart", "restart_sec", "pidfile")
     name: str
     path: str
     description: str
@@ -66,6 +79,7 @@ class Unit:
     env_file: "str | None"
     user: "str | None"
     restart: str
+    restart_sec: float
     pidfile: "str | None"
 
     def __init__(self, name, path):
@@ -82,6 +96,7 @@ class Unit:
         self.env_file = None
         self.user = None
         self.restart = "no"
+        self.restart_sec = 0.0
         self.pidfile = None
 
 
@@ -131,6 +146,11 @@ def parse_unit_file(path):
                         unit.user = val or None
                     elif key == "Restart":
                         unit.restart = val.lower()
+                    elif key == "RestartSec":
+                        try:
+                            unit.restart_sec = max(0.0, float(val))
+                        except ValueError:
+                            unit.restart_sec = 0.0
                     elif key == "PIDFile":
                         unit.pidfile = val or None
     except OSError:
@@ -221,7 +241,19 @@ class Supervisor:
         self.units = load_units()
         self.pids = {}       # name -> tracked pid (Type=simple/forking)
         self.restarts = {}   # name -> restart attempts
+        self.pending_restart = {}  # name -> monotonic time the restart is due
         self.stop_all = False
+
+    def check_pending(self):
+        """Start restarts whose RestartSec delay has elapsed."""
+        now = time.monotonic()
+        with self.lock:
+            due = [n for n, t in self.pending_restart.items() if now >= t]
+            for name in due:
+                del self.pending_restart[name]
+                res = self.start_unit(name)
+                if res.get("ok"):
+                    _journal(name, "restarted", pid=res.get("pid"))
 
     # -- process helpers
     @staticmethod
@@ -321,6 +353,7 @@ class Supervisor:
                     time.sleep(0.1)
             self.pids[name] = pid
             self._write_pidfile(name, pid)
+            _journal(name, "started", pid=pid)
             return {"ok": True, "state": ACTIVE, "pid": pid}
 
     def _read_main_pid(self, pidfile):
@@ -335,6 +368,7 @@ class Supervisor:
         with self.lock:
             pid = self.pids.pop(name, None) or self._read_pidfile(name)
             if pid and self._pid_alive(pid):
+                _journal(name, "stopped", pid=pid)
                 try:
                     os.kill(pid, signal.SIGTERM)
                 except OSError:
@@ -396,6 +430,7 @@ class Supervisor:
             if name:
                 del self.pids[name]
                 finished[name] = code
+                _journal(name, "exited", pid=pid, code=code)
                 unit = self.units.get(name)
                 if unit and unit.type == "oneshot":
                     self._clear_pidfile(name)
@@ -406,9 +441,15 @@ class Supervisor:
                     if code != 0 or want == "always":
                         if tries < MAX_RESTARTS:
                             self.restarts[name] = tries + 1
-                            self.start_unit(name)
+                            delay = (unit.restart_sec if unit else 0.0) or 0.0
+                            if delay > 0:
+                                self.pending_restart[name] = \
+                                    time.monotonic() + delay
+                            else:
+                                self.start_unit(name)
                         else:
                             self._clear_pidfile(name)
+                            _journal(name, "failed")
         return finished
 
     # -- control socket
@@ -531,6 +572,7 @@ def run_init(command):
     try:
         while True:
             sup.reap()
+            sup.check_pending()
             if cmd_pid is not None:
                 try:
                     waited, status = os.waitpid(cmd_pid, os.WNOHANG)

@@ -26,6 +26,7 @@ TOP_COMMANDS = (
     ("clone", "Copy a container (snapshot before risky changes)."),
     ("push", "Copy a host file/dir into a container."),
     ("pull", "Copy a file/dir out of a container to the host."),
+    ("ports", "Show the phone's LAN IP + every listening TCP port."),
     ("service", "Manage a container's services from the host (start/stop/enable/status)."),
     ("setuser", "Set a container's default login user (least privilege)."),
     ("check-update", "Check GitHub for a newer release."),
@@ -44,6 +45,38 @@ FRONT_NOTES = (
     "No root needed: the client talks to the privileged daemon over a unix socket.",
     "Topics: 'apatch-chroot help display' (GUI/termux-x11) and "
     "'apatch-chroot help storage' (convert/move/disk space).",
+    "More commands: 'apatch-chroot --help --page 2' (services, hardening, "
+    "in-container systemd suite).",
+)
+
+# ---- PAGE 2: the newer half of the surface (v0.5.x). Shown by
+# 'apatch-chroot --help --page 2'. Same render as the front page.
+TOP_COMMANDS_PAGE2 = (
+    ("ports", "Show the phone's LAN IP + every listening TCP port "
+              "(chroot webapps are LAN-reachable, no forwarding)."),
+    ("info", "Show daemon and host capability status."),
+    ("stats", "Show per-container disk usage and running sessions."),
+    ("check-update", "Check GitHub for a newer release."),
+    ("self-update", "Download the latest module zip to flash in APatch."),
+)
+
+FRONT_NOTES_PAGE2 = (
+    "SESSION FLAGS for run/login/exec:",
+    "  --init              boot the container's init supervisor (systemd-style",
+    "                      unit files, dependency order, zombie reaping)",
+    "  --shared-storage    Android storage inside the container at /mnt/sdcard",
+    "  --shared-display    termux-x11 display passthrough",
+    "  --shared-audio      host audio passthrough",
+    "  --box64             x86_64 emulation (opt-in)",
+    "  --user U / --root   session-only login user",
+    "CONTAINMENT ESCAPE HATCHES (default is hardened):",
+    "  --no-harden         skip the fortress (legacy behavior)",
+    "  --keep-sysadmin     keep CAP_SYS_ADMIN (FUSE/AppImage users)",
+    "IN-CONTAINER SYSTEMD SUITE (staged with python3 guests):",
+    "  systemctl           unit files, start/stop/enable/status, dependencies",
+    "  loginctl            sessions, terminate, linger (services survive logout)",
+    "  journalctl          query service logs + lifecycle events (-u -f -n -r)",
+    "Topics: 'apatch-chroot help display' and 'apatch-chroot help storage'.",
 )
 
 # Topic help pages (not commands): reachable via 'apatch-chroot help <topic>'.
