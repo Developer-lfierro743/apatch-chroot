@@ -1,7 +1,7 @@
 import pty, os, sys, select, time
 
 PY = "/data/data/com.termux/files/usr/bin/python3"
-CL = "/data/local/tmp/apatch-chroot/client/apatch-chroot.py"
+CL = "/data/apatch-chroot/client/apatch-chroot.py"
 
 pid, fd = pty.fork()
 if pid == 0:

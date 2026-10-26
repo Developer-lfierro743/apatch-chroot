@@ -1,6 +1,6 @@
 import pty, os, sys, select, time
 
-CLIENT = "/data/local/tmp/apatch-chroot/client/apatch-chroot.py"
+CLIENT = "/data/apatch-chroot/client/apatch-chroot.py"
 PY = "/data/data/com.termux/files/usr/bin/python3"
 
 pid, fd = pty.fork()

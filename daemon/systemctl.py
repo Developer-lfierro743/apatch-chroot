@@ -602,15 +602,16 @@ def run_command(argv):
         if resp and resp.get("ok"):
             _print_rows(resp["units"])
         else:
-            all_units = load_units()
-            _print_rows([{"unit": n + ".service", "load":
-                          "loaded" if all_units[n].exec_start else "error",
-                          "active": _status_from_files([n])[0]["active"],
-                          "sub": "running" if
-                          _status_from_files([n])[0]["active"] == ACTIVE
-                          else "dead",
-                          "description": all_units[n].description}
-                         for n in sorted(all_units)])
+            rows = []
+            for n in sorted(load_units()):
+                st = _status_from_files([n])[0]
+                rows.append({"unit": n + ".service",
+                             "load": "loaded",
+                             "active": st["active"],
+                             "sub": "running" if st["active"] == ACTIVE
+                             else "dead",
+                             "description": st["description"]})
+            _print_rows(rows)
         return 0
 
     if verb in ("start", "stop", "restart"):
