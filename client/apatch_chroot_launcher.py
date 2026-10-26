@@ -1,4 +1,4 @@
- ""Importable entry point for the installed `apatch-chroot` launcher.
+"""Importable entry point for the installed `apatch-chroot` launcher.
 
 The client lives in client/apatch-chroot.py (a hyphen, so it cannot be
 imported by name). This thin wrapper is what the module's launcher imports;

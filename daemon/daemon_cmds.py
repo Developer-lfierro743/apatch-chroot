@@ -285,6 +285,7 @@ def _lookup_uid_gid_pw(user):
 # the daemon and staged into each container as needed.
 _DAEMON_DIR = os.path.dirname(os.path.abspath(__file__))
 INIT_SCRIPT = os.path.join(_DAEMON_DIR, "init.sh")
+SYSTEMCTL_PY = os.path.join(_DAEMON_DIR, "systemctl.py")
 SYSTEMCTL_SHIM = os.path.join(_DAEMON_DIR, "systemctl-shim.sh")
 LOGIN_WRAPPER = os.path.join(_DAEMON_DIR, "login-wrapper.sh")
 DEFAULT_BASHRC = os.path.join(_DAEMON_DIR, "default-bashrc")
@@ -355,26 +356,58 @@ def stage_login_wrapper(rootfs):
 def stage_init(rootfs):
     """Copy the container init supervisor + systemctl shim into the rootfs.
 
-    Returns the in-container path to the init script, or None if it could not
-    be staged. The init becomes the chroot's PID 1 and runs the user's command
-    as a child — Android's own PID 1 is never involved (the daemon forks into
-    a private mount namespace first).
+    Returns the in-container path to the init script, or None if it could
+    not be staged. The init becomes the chroot's PID 1 and runs the user's
+    command as a child — Android's own PID 1 is never involved (the daemon
+    forks into a private mount namespace first). Called BEFORE chroot: it
+    reads the daemon's own scripts (invisible inside the chroot) and writes
+    rootfs-prefixed paths.
 
-    Also installs the systemctl shim at /usr/bin/systemctl (and /bin/systemctl)
-    so `systemctl start sshd` inside the container talks to the mini-init
-    instead of the real (non-functional) systemd.
+    Layout staged here:
+      /usr/local/bin/apatch-systemctl.py   Python systemctl replacement (MIT)
+      /usr/local/bin/apatch-init.sh        legacy POSIX sh supervisor
+      /usr/local/bin/apatch-systemctl-sh   legacy POSIX sh systemctl shim
+      /usr/local/bin/apatch-init           wrapper: python path if the guest
+                                           has python3, else the sh supervisor
+      /usr/bin/systemctl + /bin/systemctl  wrapper: python path if available,
+                                           else the sh shim (real binary kept
+                                           as systemctl.real)
     """
     if not os.path.isfile(INIT_SCRIPT):
         return None
     try:
         local_bin = os.path.join(rootfs, "usr", "local", "bin")
         os.makedirs(local_bin, exist_ok=True)
-        dest = os.path.join(local_bin, "apatch-init")
-        shutil.copy2(INIT_SCRIPT, dest)
-        os.chmod(dest, 0o755)
 
-        # Install the systemctl shim, replacing the real binary so unit-file
-        # driven `systemctl` calls are intercepted by the mini-init.
+        def _write(path, text, mode=0o755):
+            with open(path, "w") as fh:
+                fh.write(text)
+            os.chmod(path, mode)
+
+        # Legacy sh supervisor + sh shim (fallback when the guest has no python3).
+        shutil.copy2(INIT_SCRIPT, os.path.join(local_bin, "apatch-init.sh"))
+        os.chmod(os.path.join(local_bin, "apatch-init.sh"), 0o755)
+        if os.path.isfile(SYSTEMCTL_SHIM):
+            shutil.copy2(SYSTEMCTL_SHIM,
+                         os.path.join(local_bin, "apatch-systemctl-sh"))
+            os.chmod(os.path.join(local_bin, "apatch-systemctl-sh"), 0o755)
+
+        guest_python = os.path.isfile(os.path.join(rootfs, "usr", "bin", "python3"))
+
+        # 1) apatch-init — the execve target (PID-1 supervisor).
+        if guest_python and os.path.isfile(SYSTEMCTL_PY):
+            shutil.copy2(SYSTEMCTL_PY,
+                         os.path.join(local_bin, "apatch-systemctl.py"))
+            os.chmod(os.path.join(local_bin, "apatch-systemctl.py"), 0o755)
+            _write(os.path.join(local_bin, "apatch-init"), APATCH_INIT_WRAPPER)
+        else:
+            shutil.copy2(os.path.join(local_bin, "apatch-init.sh"),
+                         os.path.join(local_bin, "apatch-init"))
+            os.chmod(os.path.join(local_bin, "apatch-init"), 0o755)
+
+        # 2) systemctl — intercepted by the replacement so unit-file driven
+        #    calls talk to the mini-init instead of the real (non-functional)
+        #    systemd.
         if os.path.isfile(SYSTEMCTL_SHIM):
             for bindir in ("usr/bin", "bin"):
                 d = os.path.join(rootfs, bindir)
@@ -384,12 +417,34 @@ def stage_init(rootfs):
                     if os.path.exists(sd) and not os.path.exists(sd + ".real"):
                         with contextlib.suppress(OSError):
                             os.rename(sd, sd + ".real")
-                    shutil.copy2(SYSTEMCTL_SHIM, sd)
-                    os.chmod(sd, 0o755)
+                    if guest_python and os.path.isfile(SYSTEMCTL_PY):
+                        _write(sd, SYSTEMCTL_WRAPPER)
+                    else:
+                        shutil.copy2(SYSTEMCTL_SHIM, sd)
+                        os.chmod(sd, 0o755)
 
         return "/usr/local/bin/apatch-init"
     except OSError:
         return None
+
+
+APATCH_INIT_WRAPPER = """#!/bin/sh
+# apatch-chroot init supervisor: prefer the Python replacement (systemd-style
+# unit files, dependency order, control socket), fall back to the POSIX sh
+# supervisor when the guest has no python3.
+if [ -x /usr/local/bin/apatch-systemctl.py ] && command -v python3 >/dev/null 2>&1; then
+    exec python3 /usr/local/bin/apatch-systemctl.py init "$@"
+fi
+exec /bin/sh /usr/local/bin/apatch-init.sh "$@"
+"""
+
+SYSTEMCTL_WRAPPER = """#!/bin/sh
+# apatch-chroot systemctl replacement: Python when available, sh shim otherwise.
+if [ -x /usr/local/bin/apatch-systemctl.py ] && command -v python3 >/dev/null 2>&1; then
+    exec python3 /usr/local/bin/apatch-systemctl.py "$@"
+fi
+exec /bin/sh /usr/local/bin/apatch-systemctl-sh "$@"
+"""
 
 
 RESOLV_MARKER = "# managed by apatch-chroot - do not edit (override: /etc/resolv.conf.d/local.conf)"
@@ -548,6 +603,12 @@ def run_container(args, conn):
                             os.write(2, b"apatch-chroot: box64 registered (x86_64 enabled)\n")
             # Give the guest DNS (Android has no /etc/resolv.conf) before chroot.
             ensure_resolv_conf(rootfs)
+            # Stage the init supervisor + systemctl shim BEFORE chroot:
+            # stage_init checks INIT_SCRIPT under the daemon dir, which is
+            # invisible after chroot (the old post-chroot call always
+            # returned None, so --init silently degraded to a plain exec
+            # and the guest's real systemctl answered instead of the shim).
+            init_path = stage_init(rootfs) if args.get("use_init") else None
             os.chroot(rootfs)
             os.chdir(cwd)
             _apply_hardening(args)
@@ -568,7 +629,6 @@ def run_container(args, conn):
             # private mount namespace. Init is invoked via /bin/sh since some
             # minimal images lack a shebang handler.
             if args.get("use_init"):
-                init_path = stage_init(rootfs)
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=use_display, audio=use_audio))
                 # Fall through to plain exec if staging failed.
@@ -1199,6 +1259,9 @@ def exec_container(args, conn):
                     import binfmt as binfmt_mod
                     binfmt_mod.register_box64(rootfs)
             ensure_resolv_conf(rootfs)
+            # Same pre-chroot staging fix as run_container (see comment there):
+            # post-chroot staging could never see the daemon's own scripts.
+            init_path = stage_init(rootfs) if args.get("use_init") else None
             os.chroot(rootfs)
             os.chdir(cwd)
             _apply_hardening(args)
@@ -1209,7 +1272,6 @@ def exec_container(args, conn):
                 )
                 drop_privileges(rootfs, eff_user, command)
             if args.get("use_init"):
-                init_path = stage_init(rootfs)
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=args.get("shared_display", False), audio=args.get("shared_audio", False)))
             # command[0] is absolute now (resolve_command_path), so execv is
