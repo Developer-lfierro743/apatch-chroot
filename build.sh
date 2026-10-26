@@ -28,11 +28,22 @@ cp "$HERE/module/watchdog.sh"  "$STAGE/"
 # Update manifest (also served from GitHub raw for the updateJson URL).
 [ -f "$HERE/update.json" ] && cp "$HERE/update.json" "$STAGE/"
 
-# Daemon + client trees (no __pycache__).
-mkdir -p "$STAGE/daemon" "$STAGE/client"
+# Daemon + client trees (no __pycache__) + the Modified systemd suite.
+mkdir -p "$STAGE/daemon" "$STAGE/client" "$STAGE/systemd"
 for f in "$HERE"/daemon/*.py; do
     cp "$f" "$STAGE/daemon/"
 done
+# The Modified systemd suite (systemctl, loginctl, journald + examples):
+# the daemon stages these into containers and needs them beside daemon/.
+for f in "$HERE"/systemd/*.py; do
+    [ -f "$f" ] && cp "$f" "$STAGE/systemd/"
+done
+if [ -d "$HERE/systemd/examples" ]; then
+    mkdir -p "$STAGE/systemd/examples"
+    for f in "$HERE"/systemd/examples/*; do
+        [ -f "$f" ] && cp "$f" "$STAGE/systemd/examples/"
+    done
+fi
 # The container init supervisor (POSIX sh) ships in the daemon dir too.
 for f in "$HERE"/daemon/*.sh; do
     [ -f "$f" ] && cp "$f" "$STAGE/daemon/"

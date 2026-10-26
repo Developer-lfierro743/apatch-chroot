@@ -26,6 +26,21 @@ for f in "$MODDIR"/daemon/*; do
 done
 chmod 755 "$DAEMON_DIR"
 
+# The Modified systemd suite (systemctl.py, loginctl.py, journald.py) lives
+# beside the daemon: SYSTEMD_DIR = /data/apatch-chroot/systemd. Same
+# copy-everything pattern so new suite files deploy with updates.
+SYSTEMD_DST=/data/apatch-chroot/systemd
+if [ -d "$MODDIR/systemd" ]; then
+    mkdir -p "$SYSTEMD_DST/examples"
+    for f in "$MODDIR"/systemd/*.py; do
+        [ -f "$f" ] && cp -f "$f" "$SYSTEMD_DST/" 2>/dev/null
+    done
+    for f in "$MODDIR"/systemd/examples/*; do
+        [ -f "$f" ] && cp -f "$f" "$SYSTEMD_DST/examples/" 2>/dev/null
+    done
+    [ -f "$MODDIR/systemd/README.md" ] && cp -f "$MODDIR/systemd/README.md" "$SYSTEMD_DST/" 2>/dev/null
+fi
+
 # Wait until Android has booted AND the Termux interpreter is runnable
 # (max ~120s). Both gates, because either alone is not enough.
 i=0
