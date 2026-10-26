@@ -43,3 +43,15 @@ Highlights per release. Full notes live in the tagged
 - Container-owned DNS (Google + Cloudflare, marker-based)
 - `ports` — LAN IP + listening sockets (chroot webapps, no forwarding)
 - Broker SIGTERM cleanup; orphaned-pid reaping
+
+## v0.5.5 — first test run fixes (versionCode 20)
+
+- **hermes-gateway unit: real paths** — the gateway lives at
+  `/root/.local/bin/hermes` (pipx/user install), not the venv layout the
+  example assumed; PATH + WorkingDirectory fixed (verified live: the
+  supervisor's ENOENT told us exactly where)
+- **fork() DeprecationWarning gone** — the session child is forked BEFORE
+  the control-socket thread starts (single-threaded fork)
+- **`systemctl daemon-reload`** — re-read unit files without restarting
+  the init (systemd parity)
+- 32/32 tests green

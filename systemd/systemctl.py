@@ -496,6 +496,12 @@ class Supervisor:
                     "results": {u: fn(u) for u in units}}
         if verb == "list-units":
             return {"ok": True, "units": self.snapshot()}
+        if verb == "daemon-reload":
+            # systemd parity: re-read unit files without restarting the init.
+            self.units = load_units()
+            self.restarts.clear()
+            self.pending_restart.clear()
+            return {"ok": True, "units_loaded": len(self.units)}
         if verb == "status":
             out = []
             for u in (units or sorted(self.units)):
@@ -530,8 +536,6 @@ def run_init(command):
             sys.stderr.write(f"apatch-chroot init: {name}: {res.get('error')}\n")
 
     stop_event = threading.Event()
-    threading.Thread(target=sup.serve_control, args=(stop_event,),
-                     daemon=True).start()
 
     def on_term(_sig, _frm):
         sup.stop_all = True
@@ -550,6 +554,9 @@ def run_init(command):
         pass
     cmd_pid = None
     if command:
+        # Fork BEFORE starting the control-socket thread: os.fork() in a
+        # multi-threaded process can deadlock children (and prints a
+        # DeprecationWarning). Single-threaded fork, thread starts after.
         cmd_pid = os.fork()
         if cmd_pid == 0:
             try:
@@ -567,6 +574,10 @@ def run_init(command):
                 loginctl.record_session(cmd_pid, "root", command, tty)
             except OSError:
                 pass
+
+    # Control socket thread (after the fork — see above).
+    threading.Thread(target=sup.serve_control, args=(stop_event,),
+                     daemon=True).start()
 
     code = 0
     try:
@@ -680,6 +691,18 @@ def run_command(argv):
                              "description": st["description"]})
             _print_rows(rows)
         return 0
+
+    if verb == "daemon-reload":
+        resp = _talk({"verb": "daemon-reload"})
+        if resp is None:
+            print("apatch-chroot systemctl: init supervisor not running "
+                  "(start the container with --init)", file=sys.stderr)
+            return 1
+        if resp.get("ok"):
+            return 0
+        print("apatch-chroot systemctl: " + str(resp.get("error")),
+              file=sys.stderr)
+        return 1
 
     if verb in ("start", "stop", "restart"):
         resp = _talk({"verb": verb, "units": units})
