@@ -86,6 +86,21 @@ broke audio — it lacked isolation. apatch-chroot's `--shared-display` binds th
 termux-x11 socket into the **same private namespace**, so it cannot propagate.
 Same guarantee as every other mount.
 
+## LXQt desktop profile
+
+`apatch-chroot desktop` requires the private mount namespace; it will not fall
+back to an unmounted chroot. It uses a fresh `/dev` with a small allowlist of
+basic devices, fresh `/dev/pts` and `/dev/shm`, and its own `/tmp`. No Android
+`/dev/snd`, `/sys`, or host runtime directory is bound in this mode. The X11
+and optional PulseAudio sockets deliberately let the guest talk to those host
+services. Only share an X11 display with trusted clients.
+
+Mount isolation is not full security isolation. This mode does not create PID,
+user, IPC, or network namespaces. `subset=pid` hides non-process `/proc`
+entries, not the host PID namespace itself. Avoid running untrusted root
+programs in the guest. The startup RAM guard reads Android memory availability;
+it does not reconfigure Android's memory policies or set a hard RAM limit.
+
 ## What you can rely on
 
 - Host audio (`/dev/snd`) stays intact during and after a session.

@@ -9,15 +9,20 @@ remove. Milestone 1 (chroot + PTY) and install are both proven.
 """
 
 import contextlib
+import errno
 import fcntl
 import os
 import pty
+import re
 import select
 import shutil
 import struct
 import termios
+from threading import Lock
 
 MAX = 65536
+_DESKTOP_LEASE = Lock()  # One desktop on Termux:X11 :0, even across guests.
+_DESKTOP_MIN_FREE_MIB = 768
 CONTAINERS_DIR = "/data/apatch-chroot/containers"
 
 # Live session children: name -> list of (pid). The daemon forks one child per
@@ -60,6 +65,15 @@ def _guest_env(display=False, audio=False):
         # The PulseAudio socket is bound at this in-container path (mounts.py).
         env["PULSE_SERVER"] = "unix:/var/run/pulse/native"
     return env
+
+
+def _exec_guest(command, env):
+    # Already-resolved absolute/relative paths need no PATH lookup, but must
+    # still receive the guest env (execv would inherit the daemon's env).
+    if "/" in command[0]:
+        os.execve(command[0], command, env)
+    else:
+        os.execvpe(command[0], command, env)
 
 
 def host_info():
@@ -535,7 +549,7 @@ def ensure_resolv_conf(rootfs):
         pass
 
 
-def _apply_hardening(args):
+def _apply_hardening(args, *, required=False):
     """Drop host-dangerous capabilities from the bounding set (post-chroot).
 
     One-way and inherited by every descendant — setuid/setcap inside the
@@ -554,18 +568,98 @@ def _apply_hardening(args):
     try:
         import syscalls as syscalls_mod
         caps = set(syscalls_mod.HARDEN_DROP)
-        if args.get("keep_sysadmin"):
+        if required:
+            # The legacy set doesn't currently include SYS_ADMIN. Desktop
+            # processes must not be able to remount their private device view.
+            caps.add(syscalls_mod.CAP_SYS_ADMIN)
+        elif args.get("keep_sysadmin"):
             caps.discard(syscalls_mod.CAP_SYS_ADMIN)
         for cap in sorted(caps):
-            with contextlib.suppress(OSError):
+            try:
                 syscalls_mod.drop_cap_from_bounding(cap)
+            except OSError as e:
+                if required and e.errno != errno.EINVAL:
+                    raise  # EINVAL means a capability absent on this kernel.
         with contextlib.suppress(OSError):
             os.write(2, b"apatch-chroot: hardened (host-dangerous capabilities dropped)\n")
     except Exception:
-        pass  # hardening is best-effort; never break the login
+        if required:
+            raise
+        pass  # Legacy login remains best-effort.
 
 
-def run_container(args, conn):
+def _mem_available_kib(path="/proc/meminfo"):
+    # Read from the daemon, before mounting the guest's procfs. MemFree is
+    # not interchangeable with MemAvailable (which includes reclaimable RAM).
+    try:
+        with open(path, encoding="ascii") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemAvailable:"):
+                    _, value, unit = line.split()
+                    if unit == "kB" and value.isdecimal():
+                        return int(value)
+                    return None
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def desktop_container(args, conn):
+    """Guard the desktop before opening a PTY or starting any guest process."""
+    name = args.get("name")
+    if not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", name):
+        return {"ok": False, "error": "desktop requires a valid container name"}
+    if not os.path.isdir(os.path.join(CONTAINERS_DIR, name, "rootfs")):
+        return {"ok": False, "error": f"no such container: {name}"}
+    as_root = args.get("as_root") is True
+    user = args.get("user")
+    if user is not None and (not isinstance(user, str) or not user or as_root):
+        return {"ok": False, "error": "specify either --user USER or --root"}
+    user = "root" if as_root else (user or read_default_user(name))
+    if not user or (not as_root and (user == "root" or user == "0")):
+        return {"ok": False, "error": "set a non-root guest user, or pass --root explicitly"}
+    minimum_mib = args.get("min_free_mib", _DESKTOP_MIN_FREE_MIB)
+    if type(minimum_mib) is not int or not 1 <= minimum_mib <= 65536:
+        return {"ok": False, "error": "--min-free-mib must be an integer from 1 to 65536"}
+    available = _mem_available_kib()
+    if available is None:
+        return {"ok": False, "error": "can't read Android MemAvailable; not launching LXQt without a RAM check"}
+    if available < minimum_mib * 1024:
+        return {"ok": False, "error": f"Android has {available // 1024} MiB available; LXQt needs {minimum_mib} MiB of headroom"}
+    check = args.get("check") is True
+    if not check and not _DESKTOP_LEASE.acquire(blocking=False):
+        return {"ok": False, "error": "an APatch LXQt desktop already owns Termux:X11 :0"}
+    try:
+        launcher = ["/usr/local/bin/apatch-startlxqt"]
+        if check:
+            launcher.append("--check")
+        return run_container({"name": name, "command": launcher, "user": user, "as_root": as_root,
+                              "shared_audio": args.get("shared_audio") is True,
+                              "desktop_headroom": (available // 1024, minimum_mib)}, conn, desktop=True)
+    finally:
+        if not check:
+            _DESKTOP_LEASE.release()
+
+
+def _desktop_user_env(user, *, as_root, pulse_server):
+    info = _lookup_uid_gid("/", user)
+    if info is None:
+        raise OSError(f"guest user {user!r} not found")
+    uid, gid, home, shell = info
+    if uid == 0 and not as_root:
+        raise OSError("desktop refuses UID 0 without explicit --root")
+    os.setgroups([])  # Don't export supplementary Android groups to the guest.
+    os.setgid(gid)
+    os.setuid(uid)
+    os.chdir(home)
+    env = _guest_env(display=True)
+    env.update(HOME=home, USER=user, LOGNAME=user, SHELL=shell, LANG="C.UTF-8")
+    if pulse_server:
+        env["PULSE_SERVER"] = pulse_server
+    return env
+
+
+def run_container(args, conn, *, desktop=False):
     """Fork a chrooted child on a PTY; proxy its I/O over *conn*.
 
     args: {"name", "command", "cwd"}. Blocks until the child exits, streaming
@@ -582,7 +676,7 @@ def run_container(args, conn):
     command = args.get("command") or ["/bin/bash"]
     cwd = args.get("cwd") or "/"
 
-    rootfs = f"/data/apatch-chroot/containers/{name}/rootfs"
+    rootfs = os.path.join(CONTAINERS_DIR, name, "rootfs")
     if not os.path.isdir(rootfs):
         return {"ok": False, "error": f"container '{name}' not installed at {rootfs}"}
     # Resolve a bare command name to an absolute path in the guest (avoids the
@@ -619,6 +713,24 @@ def run_container(args, conn):
             os.dup2(slave_fd, 2)
             if slave_fd > 2:
                 os.close(slave_fd)
+            if desktop:
+                import mounts as mounts_mod
+                mounts_mod.enter_private_mount_ns()
+                audio_bound = mounts_mod.setup_desktop_mounts(rootfs, audio=use_audio)
+                if use_audio and not audio_bound:
+                    os.write(2, b"apatch-chroot: no shareable PulseAudio socket; continuing without audio\n")
+                os.chroot(rootfs)
+                os.chdir("/")
+                _apply_hardening({}, required=True)
+                env = _desktop_user_env(args["user"], as_root=args["as_root"],
+                                        pulse_server=mounts_mod.DESKTOP_PULSE_SERVER if audio_bound else None)
+                if not os.access(command[0], os.X_OK):
+                    raise OSError("guest LXQt launcher missing; run setup-desktop.sh --launcher-only inside Ubuntu")
+                available, minimum = args["desktop_headroom"]
+                os.write(2, (f"Android RAM available: {available} MiB (startup minimum: {minimum} MiB). "
+                             "No hard cap; Android LMKD still applies.\n").encode())
+                _exec_guest(command, env)
+                os._exit(127)  # Never fall through to a less isolated path.
             # Unshare a private mount namespace, then mount the pseudo-fs set,
             # all before chroot. enter_private_mount_ns VERIFIES '/' became
             # private and setup_mounts refuses a rootfs outside CONTAINERS_DIR,
@@ -723,11 +835,10 @@ def run_container(args, conn):
                 _ensure_default_profile(rootfs)
                 os.execve("/bin/bash", ["/bin/bash", "-l", "-i"], env)
                 # (execve replaces the process; if it fails we fall through)
-            # command[0] is absolute now (resolve_command_path), so execv skips
-            # the PATH search that crashed on stripped chroots.
-            if "/" in command[0]:
-                os.execv(command[0], command)
-            os.execvpe(command[0], command, _guest_env(display=use_display, audio=use_audio))
+            env = _guest_env(display=use_display, audio=use_audio)
+            if not args.get("use_init") and eff_user and eff_user != "root" and not warn:
+                env.update(HOME=os.environ["HOME"], USER=os.environ["USER"], LOGNAME=os.environ["USER"])
+            _exec_guest(command, env)
         except Exception as e:
             with contextlib.suppress(OSError):
                 os.write(2, f"exec failed: {e}\n".encode())
@@ -750,6 +861,10 @@ def run_container(args, conn):
                 except OSError:
                     data = b""
                 if not data:
+                    if desktop:
+                        _, status = os.waitpid(pid, 0)
+                        send_control({"ok": True, "data": {"exit": os.waitstatus_to_exitcode(status)}})
+                        return None
                     break
                 send_data(data)
             if conn in readable:
@@ -1339,15 +1454,14 @@ def exec_container(args, conn):
                 eff_user = "root" if args.get("as_root") else (
                     args.get("user") or read_default_user(name)
                 )
-                drop_privileges(rootfs, eff_user, command)
+                _cmd, warn = drop_privileges(rootfs, eff_user, command)
             if args.get("use_init"):
                 if init_path:
                     os.execve("/bin/sh", ["/bin/sh", init_path, *command], _guest_env(display=args.get("shared_display", False), audio=args.get("shared_audio", False)))
-            # command[0] is absolute now (resolve_command_path), so execv is
-            # safe and skips the PATH search that crashed on stripped chroots.
-            if "/" in command[0]:
-                os.execv(command[0], command)
-            os.execvpe(command[0], command, _guest_env(display=args.get("shared_display", False), audio=args.get("shared_audio", False)))
+            env = _guest_env(display=args.get("shared_display", False), audio=args.get("shared_audio", False))
+            if not args.get("use_init") and eff_user and eff_user != "root" and not warn:
+                env.update(HOME=os.environ["HOME"], USER=os.environ["USER"], LOGNAME=os.environ["USER"])
+            _exec_guest(command, env)
         except Exception as e:
             with contextlib.suppress(OSError):
                 os.write(2, f"exec failed: {e}\n".encode())

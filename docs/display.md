@@ -19,6 +19,12 @@ termux-x11 :0 &
 
 ## Run a GUI app in a container
 
+For a full desktop, use [`apatch-chroot desktop`](desktop.md) instead. That
+mode binds only `X0`, has its own minimal device tree, and refuses startup if
+it cannot establish private mounts or connect to the display. On any shared
+X11 display, clients can observe or interfere with each other; only share with
+trusted clients.
+
 ```sh
 apatch-chroot login ubuntu --shared-display
 # inside:

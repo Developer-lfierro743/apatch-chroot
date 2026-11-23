@@ -22,6 +22,7 @@ TOP_COMMANDS = (
     ("run", "Run a command in a container (non-interactive or one-shot)."),
     ("exec", "Run a command and capture its output (scripting)."),
     ("login", "Open an interactive shell inside a container."),
+    ("desktop", "Start a lean LXQt desktop on the existing Termux:X11 server."),
     ("list", "List installed containers."),
     ("clone", "Copy a container (snapshot before risky changes)."),
     ("push", "Copy a host file/dir into a container."),
@@ -83,6 +84,23 @@ FRONT_NOTES_PAGE2 = (
 HELP_TOPICS = ("display", "storage")
 
 HELP_PAGES = {
+    "desktop": {
+        "usage": "desktop NAME [--check] [--shared-audio] [--user U | --root] [--min-free-mib N]",
+        "summary": (
+            "Reuse a running Termux:X11 server (:0) with a private Ubuntu LXQt "
+            "session. Refuses when Android is already low on RAM. The startup "
+            "check is not a hard limit; Android LMKD can still act. Install the "
+            "guest launcher with setup-desktop.sh first."
+        ),
+        "options": [
+            ("--check", "Check RAM, display, guest shared memory and both D-Bus instances; don't open the desktop."),
+            ("--shared-audio", "Reuse the Termux PulseAudio Unix socket if available."),
+            ("--user U", "Run LXQt as this guest user instead of the saved guest user."),
+            ("--root", "Explicitly allow a root desktop (not recommended)."),
+            ("--min-free-mib N", "Minimum Android MemAvailable at startup (default: 768 MiB)."),
+        ],
+        "examples": ["apatch-chroot desktop ubuntu --check", "apatch-chroot desktop ubuntu --shared-audio"],
+    },
     "convert": {
         "usage": "convert NAME [AS_NAME]",
         "summary": (

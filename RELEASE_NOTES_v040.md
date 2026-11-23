@@ -19,7 +19,7 @@ apatch-chroot login ubuntu
 **Sound & GUI**
 - **`--shared-audio`** (alias `--shared-sound`) — container apps play through Android audio via PulseAudio. Routes through a userspace socket, never raw ALSA — host `/dev/snd` untouched, namespace-isolated.
 - **`--shared-display`** — GUI apps via termux-x11 (carried + hardened).
-- Full **LXQt desktop** support (`scripts/setup-desktop.sh` + [desktop docs](https://developer-lfierro743.github.io/apatch-chroot/desktop)).
+- Full **LXQt desktop** support (`scripts/setup-desktop.sh` + [desktop docs](https://developer-lfierro743.github.io/apatch-chroot/docs/desktop)).
 
 **Fixes**
 - **`exec`/`run` bare-command crash fixed** — no more `No module named 'warnings'`; commands resolve against the guest's own PATH pre-chroot.
@@ -40,7 +40,7 @@ apatch-chroot login ubuntu
 - Optional `--box64` (per-container x86_64)
 
 ### Documentation
-- **Website:** https://developer-lfierro743.github.io/apatch-chroot/ (architecture, safety, services, desktop, electron, storage, box64, protocol)
+- **Website:** https://developer-lfierro743.github.io/apatch-chroot/docs/ (architecture, safety, services, desktop, electron, storage, box64, protocol)
 - [SECURITY.md](https://github.com/Developer-lfierro743/apatch-chroot/blob/main/SECURITY.md) · [CONTRIBUTING.md](https://github.com/Developer-lfierro743/apatch-chroot/blob/main/CONTRIBUTING.md)
 
 ### Requirements

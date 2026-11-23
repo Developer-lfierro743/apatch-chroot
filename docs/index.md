@@ -2,6 +2,7 @@
 title: Home
 nav_order: 1
 layout: home
+permalink: /docs/
 ---
 
 # APatch Chroot
@@ -12,18 +13,18 @@ A chroot-based container runtime built around a **privileged APatch daemon** and
 
 ## Start here
 
-- **[Architecture](architecture)** — the three-process design and the two Android walls. Read this first.
-- **[Safety](safety)** — how a container runs without touching the Android host (audio, mounts). Why this tool exists.
+- **[Architecture](architecture.md)** — the three-process design and the two Android walls. Read this first.
+- **[Safety](safety.md)** — how a container runs without touching the Android host (audio, mounts). Why this tool exists.
 
 ## Topics
 
-- **[Services](services)** — mini-systemd init, the `systemctl` shim, managing services from the host.
-- **[Display](display)** — GUI apps via termux-x11 (`--shared-display`).
-- **[Desktop](desktop)** — a full LXQt desktop.
-- **[Electron apps](electron)** — VSCode / Chromium (`--no-sandbox`).
-- **[Storage](storage)** — install vs convert vs `--move`, and disk-space math.
-- **[box64](box64)** — optional x86_64 emulation.
-- **[Protocol](protocol)** — the wire protocol between client, broker, and core.
+- **[Services](services.md)** — mini-systemd init, the `systemctl` shim, managing services from the host.
+- **[Display](display.md)** — GUI apps via Termux:X11 (`--shared-display`).
+- **[LXQt desktop](desktop.md)** — run a lean desktop with private D-Bus and a RAM startup check.
+- **[Electron apps](electron.md)** — VSCode / Chromium (`--no-sandbox`).
+- **[Storage](storage.md)** — install vs convert vs `--move`, and disk-space math.
+- **[box64](box64.md)** — optional x86_64 emulation.
+- **[Protocol](protocol.md)** — the wire protocol between client, broker, and core.
 
 ## Quick reference
 
@@ -35,6 +36,7 @@ apatch-chroot login ubuntu              # interactive shell
 apatch-chroot login ubuntu --init       # + service manager
 apatch-chroot service ubuntu start sshd # manage services from host
 apatch-chroot convert ubuntu --move     # import from chroot-distro (no copy)
+apatch-chroot desktop ubuntu --check    # LXQt preflight (main branch)
 apatch-chroot --help                    # all commands
 ```
 
@@ -43,10 +45,10 @@ apatch-chroot --help                    # all commands
 - Rooted Android (APatch, or Magisk/KernelSU with path tweaks)
 - Termux (F-Droid build recommended)
 - Python 3.10+ (ships with Termux)
-- arm64 (x86_64 opt-in via box64 — see [box64](box64))
+- arm64 (x86_64 opt-in via box64 — see [box64](box64.md))
 
 ## Get it
 
 Flash the module zip from the [latest release](https://github.com/Developer-lfierro743/apatch-chroot/releases/latest) in APatch → Modules → Install from storage, then reboot.
 
-> ⚠️ This runs a **root daemon** — read the [safety notes](safety) before installing.
+> ⚠️ This runs a **root daemon** — read the [safety notes](safety.md) before installing.

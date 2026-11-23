@@ -1,22 +1,27 @@
 title: APatch Chroot
-description: Linux containers on rooted Android — without breaking the host
-theme: just-the-docs
+description: Linux containers on rooted Android with private mounts
+# GitHub Pages' branch build does not install the just-the-docs Ruby gem.
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+plugins:
+  - jekyll-remote-theme
+  - jekyll-include-cache
 
-# GitHub Pages serves this from the /docs folder.
+# Pages builds main:/docs. Keep the public /docs/ URLs from earlier builds.
+# Scope the permalink to Markdown so the theme's CSS and JS paths stay put.
 url: https://developer-lfierro743.github.io
 baseurl: "/apatch-chroot"
+defaults:
+  - scope:
+      path: "*.md"
+      type: pages
+    values:
+      permalink: "/docs/:basename:output_ext"
 
-# Repo links in the header.
 aux_links:
   "GitHub": "https://github.com/Developer-lfierro743/apatch-chroot"
   "Releases": "https://github.com/Developer-lfierro743/apatch-chroot/releases"
 
-# Search + nav.
 search_enabled: true
 heading_anchors: true
-
-# Color scheme.
 color_scheme: dark
-
-# Footer.
-footer_content: "APatch Chroot — MIT licensed. Runs a root daemon; read <a href=\"/apatch-chroot/safety\">safety</a> first."
+footer_content: 'APatch Chroot — MIT licensed. Runs a root daemon; read <a href="/apatch-chroot/docs/safety.html">safety</a> first.'

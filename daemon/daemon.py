@@ -90,6 +90,9 @@ def handle_request(req, conn):
         from daemon_cmds import run_container
         req["args"]["_conn"] = conn
         return run_container(req.get("args", {}), conn)
+    if cmd == "desktop":
+        from daemon_cmds import desktop_container
+        return desktop_container(req.get("args", {}), conn)
     if cmd == "install":
         from daemon_cmds import install_container
         return install_container(req.get("args", {}), conn)

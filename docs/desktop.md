@@ -3,90 +3,87 @@ title: Desktop (LXQt)
 nav_order: 6
 ---
 
-You can run a real Linux desktop inside a container on your phone. This guide
-sets up **LXQt** — lightweight and Qt-based, a good fit for a phone.
+`apatch-chroot desktop` runs one Ubuntu LXQt session on an existing Termux:X11
+server. It doesn't start a second X server, a display manager, or a full init.
+Use a non-root guest user when possible.
 
-## Prerequisites
+> This launcher is on `main`, not in the published module release. Build the
+> module with `bash build.sh` from the repository root and install that build
+> before running the steps below. Updating the guest scripts alone does not
+> update the Android-side daemon.
 
-On the **host** (Termux):
+## Install or upgrade the guest launcher
+
+From Termux with the updated module client and daemon running:
 
 ```sh
-pkg install x11-repo termux-x11-nightly pulseaudio
+apatch-chroot push ubuntu "$(command -v setup-desktop.sh)" /tmp/setup-desktop.sh
+apatch-chroot push ubuntu "$(command -v apatch-startlxqt.py)" /tmp/apatch-startlxqt.py
+apatch-chroot exec ubuntu --root -- /bin/sh /tmp/setup-desktop.sh --launcher-only
 ```
 
-## 1. Install the desktop (inside the container)
+If LXQt isn't installed yet, omit `--launcher-only` to install LXQt Core,
+Openbox, QTerminal, and the supporting tools. For a source checkout, the two
+files are in `scripts/`. This does not replace Ubuntu's `startlxqt` or change
+the existing `systemctl` shim. The APatch profile has its own settings under
+`~/.config/apatch-chroot/lxqt`.
+
+## Start the desktop
 
 ```sh
-apatch-chroot login ubuntu
-# inside:
-bash setup-desktop.sh
-exit
-```
-
-`setup-desktop.sh` (ships in the zip at `scripts/setup-desktop.sh`) installs
-LXQt + openbox (its window manager) + qterminal (terminal) + dbus-x11 +
-pcmanfm-qt (file manager) + FeatherPad (editor), and drops a `startlxqt`
-launcher. It's idempotent — safe to re-run.
-
-> If you don't have the script yet, copy it into the container or install
-> manually: `apt-get install -y --no-install-recommends lxqt openbox qterminal dbus-x11 lxqt-sudo pcmanfm-qt FeatherPad`.
-
-## 2. Start the host services
-
-```sh
-# in Termux (host):
+# In Termux, if Termux:X11 isn't already running:
 termux-x11 :0 &
-pulseaudio --start --exit-idle-time=-1
+
+# If your chosen guest user already exists:
+apatch-chroot setuser ubuntu YOUR_GUEST_USER
+apatch-chroot desktop ubuntu --check
+apatch-chroot desktop ubuntu
 ```
 
-## 3. Launch the desktop
+If you only have a root account, pass `--root` explicitly, including for
+`--check`. An existing X11 window manager on `:0` should be closed normally
+before launching another desktop. Individual GUI apps can share an existing
+X11 session without starting another desktop (see [Display](display.md)).
+
+### Optional sound
+
+Add `--shared-audio` to both the check and launch. If a Termux PulseAudio server
+is already running, keep using it. APatch looks for its native Unix socket in
+Termux's standard runtime directories. To start a **new** server at a known
+path, in Termux:
 
 ```sh
-apatch-chroot login ubuntu --shared-display --shared-audio
-# inside:
-startlxqt
+PULSE_RUNTIME_PATH="$PREFIX/var/run/pulse" pulseaudio --start
 ```
 
-First launch is slow (LXQt builds its config). You should get the LXQt panel,
-desktop, and a window manager. Open qterminal from the menu to get a shell.
+PulseAudio still enforces its normal authentication. If it denies the guest,
+configure the guest desktop user's PulseAudio cookie through a trusted local
+channel. The launcher doesn't copy cookies or loosen permissions. The desktop
+starts without sound if the endpoint is missing or inaccessible. It never
+starts another sound server or routes to raw Android audio devices.
 
-## What each flag does
+## What is isolated
 
-| Flag | Effect |
-|---|---|
-| `--shared-display` | binds termux-x11's socket, sets `DISPLAY=:0` (visual) |
-| `--shared-audio` | binds PulseAudio's socket, sets `PULSE_SERVER` (sound) |
+- The desktop sees a minimal device tree and private `/tmp` and `/dev/shm`.
+  The only host service sockets deliberately shared are Termux:X11 `:0` and,
+  with `--shared-audio`, PulseAudio.
+- The launcher starts real D-Bus session and system buses in a mode-`0700`
+  runtime directory. The system bus does not activate host or guest hardware
+  services. LXQt uses the session bus for desktop IPC; private D-Bus alone does
+  not provide logind, an authentication session, host power controls, disk
+  mounting or printer discovery. The lean profile skips those optional
+  autostarts along with XScreenSaver and Qlipper. The lock screen is not a
+  supported security boundary; lock the phone itself.
+- A shared X server is **not** an input or window security boundary. Only run
+  clients you trust on the same display. APatch desktop mode does not provide
+  PID, network or user namespace isolation.
 
-Both binds live in the container's private mount namespace, so the host's audio
-and mounts are untouched (see [safety.md](safety.md)).
+## Memory on Android
 
-## Running apps inside the desktop
-
-Once the desktop is up, launch apps from the LXQt menu, or from a qterminal:
-
-```sh
-pcmanfm-qt          # file manager
-featherpad file.txt # editor
-```
-
-For heavier apps (VSCode, Chromium), see [electron.md](electron.md) — they need
-`--no-sandbox`.
-
-## Tips
-
-- **Memory:** close Android apps before launching the desktop; it competes for RAM.
-- **Blank screen:** confirm `termux-x11 :0` is running and `echo $DISPLAY` is `:0`
-  inside the container.
-- **Sound:** run `pulseaudio --start` on the host *before* logging in with
-  `--shared-audio`.
-- **Resolution:** termux-x11 picks a default; adjust in its app if the desktop is
-  too small/large for your screen.
-
-## Alternative: launch the desktop automatically
-
-If you want the desktop to start on login instead of typing `startlxqt`, use
-`--init` with a service, or just alias it. A simple one-liner login:
-
-```sh
-apatch-chroot run ubuntu --shared-display --shared-audio -- /bin/bash -lc startlxqt
-```
+By default, desktop launch needs at least 768 MiB of Android `MemAvailable`.
+`--min-free-mib N` changes the threshold. `--check` tests it along with display
+access, `/dev/shm`, and D-Bus. This is **not a hard cap** and it samples only at
+startup. Android's [low-memory killer](https://source.android.com/docs/core/perf/lmkd)
+can still act later. Browsers and other heavy apps often use more RAM than
+LXQt itself. A `/dev/shm` size ceiling is not an upfront RAM reservation and
+does not supply System V IPC on kernels that lack it.

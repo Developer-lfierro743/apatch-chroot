@@ -4,7 +4,7 @@ A chroot-based Linux container tool for Android, built around a **privileged APa
 
 Run real Linux distributions (Ubuntu, Debian, Alpine, …) on a rooted Android device — without the seccomp crashes that plague tools doing chroot in the Termux app process, without the SELinux wall that blocks an app from reaching a root socket, and (since v0.5.0) with the container fenced off from the host kernel's dangerous knobs.
 
-> 📚 **Documentation website:** https://developer-lfierro743.github.io/apatch-chroot/ (architecture, safety, services, desktop, box64, protocol). Source in [docs/](docs/).
+> 📚 **[Documentation](https://developer-lfierro743.github.io/apatch-chroot/docs/)** · **[LXQt setup](https://developer-lfierro743.github.io/apatch-chroot/docs/desktop.html)** · [Markdown source](docs/index.md)
 >
 > ⚠️ This runs a **root daemon** — read [SECURITY.md](SECURITY.md) before installing. Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -44,7 +44,7 @@ The CLI never touches the root core's socket directly (SELinux denies that). All
 
 ## What's new in v0.5.x — fortress + doors
 
-- **Hardened containment (default ON)** — the container, even as root inside, cannot: see host processes, write sysfs, touch block devices or Android control sockets, load kernel modules, reconfigure host networking, change the host clock, or reboot the host. All namespace-scoped; Android's own mount table is untouched. See [The fortress](#the-fortress-host-protection).
+- **Hardened containment (default ON)** — private mounts, capability drops, a read-only sysfs view and device masks reduce host exposure. This is not a PID/user/network sandbox. See [The fortress](#the-fortress-host-protection).
 - **`--shared-storage`** — your Android files inside the container at `/mnt/sdcard` (`/sdcard` symlink).
 - **Own Python `systemctl`** — a clean-room MIT replacement that parses real systemd unit files, starts enabled services in dependency order, and gives you `systemctl start/status/enable/...` inside the container.
 - **Container-owned DNS** — Google (8.8.8.8/8.8.4.4) + Cloudflare (1.1.1.1/1.0.0.1) written to the container's `/etc/resolv.conf` on every login.
@@ -108,6 +108,7 @@ apatch-chroot service ubuntu enable sshd     # auto-start on next --init run
 apatch-chroot login ubuntu --shared-storage   # Android storage at /mnt/sdcard
 apatch-chroot login ubuntu --shared-display   # termux-x11 display
 apatch-chroot login ubuntu --shared-audio     # host audio
+apatch-chroot desktop ubuntu --check         # preflight for the lean LXQt profile
 apatch-chroot ports                   # LAN IP + listening TCP ports
 
 # x86_64 (opt-in; needs box64 installed in the container)
@@ -130,6 +131,7 @@ apatch-chroot install --help
 | `run NAME -- CMD` | Run a command on an interactive PTY. |
 | `exec NAME -- CMD` | Run a command non-interactively; capture stdout/stderr + exit code. |
 | `login NAME` | Interactive login shell. |
+| `desktop NAME [--check]` | Start a lean LXQt session using Termux:X11; see the [desktop setup guide](docs/desktop.md). |
 | `list` | List containers with size + source image. |
 | `clone SRC DST` | Full rootfs snapshot (rollback before risky changes). |
 | `push NAME SRC DEST` | Copy host files into a container. |
@@ -152,7 +154,7 @@ Everything below is **namespace-scoped** — done inside the container's private
 
 | Threat (root inside the container) | Defense |
 |---|---|
-| See / kill host processes (`/proc`) | `/proc` mounted with `subset=pid` (hidepid=2 fallback) — only the container's own process tree exists |
+| Non-process kernel data (`/proc`) | `subset=pid` hides non-process entries (`hidepid=2` fallback limits other users’ process entries); not a PID namespace |
 | Unbind drivers, flip kernel knobs (`/sys`) | `/sys` bind-mounted then **read-only** remounted |
 | `dd` a raw block device → brick | `/dev/block` masked with an empty read-only tmpfs |
 | Talk to Android's control sockets (set host **system properties** via `/dev/socket/property_service`, logd…) | `/dev/socket` masked |
@@ -170,6 +172,14 @@ Escape hatches:
 apatch-chroot login ubuntu --no-harden      # skip all of the above (legacy behavior)
 apatch-chroot login ubuntu --keep-sysadmin  # keep CAP_SYS_ADMIN (FUSE/AppImage users)
 ```
+
+## LXQt desktop
+
+See the [desktop setup guide](docs/desktop.md) for the separate launcher on an
+existing Ubuntu guest. `apatch-chroot desktop ubuntu` reuses Termux:X11 `:0`
+with its own D-Bus and minimal device tree. `--shared-audio` reuses a running
+Termux PulseAudio server when available; it is optional. A startup RAM check
+blocks low-memory launches, but does not cap later RAM usage or disable LMKD.
 
 ## Shared storage
 
@@ -325,6 +335,8 @@ Inside a `--init` container, `systemctl` talks to the init over a chroot-local u
 ## Tests
 
 ```sh
+python3 -m unittest -v desktop_test      # safe desktop tests, no Android writes
+APATCH_TEST_XVFB=1 python3 -m unittest -v desktop_test.DesktopSmoke  # optional, needs LXQt and Xvfb
 python3 -m unittest test_systemctl -v   # 11 tests: parsing, dependency order +
                                         # cycles, enable/disable, degraded status,
                                         # live process start/stop, control socket

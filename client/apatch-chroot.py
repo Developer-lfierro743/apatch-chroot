@@ -10,6 +10,7 @@ Usage:
   apatch-chroot run <name> [-- CMD...]
 """
 
+import argparse
 import json
 import os
 import shutil
@@ -585,26 +586,46 @@ def cmd_setuser(name, user):
 
 
 def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=False, shared_display=False, shared_audio=False, shared_storage=False, hardened=True, keep_sysadmin=False):
+    return _run_pty_request({"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio, "shared_storage": shared_storage, "hardened": hardened, "keep_sysadmin": keep_sysadmin}})
+
+
+def cmd_desktop(argv):
+    parser = argparse.ArgumentParser(prog="apatch-chroot desktop", allow_abbrev=False)
+    parser.add_argument("name")
+    identity = parser.add_mutually_exclusive_group()
+    identity.add_argument("--user")
+    identity.add_argument("--root", action="store_true", dest="as_root")
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--shared-audio", action="store_true")
+    parser.add_argument("--min-free-mib", type=int, default=argparse.SUPPRESS)
+    return _run_pty_request({"cmd": "desktop", "args": vars(parser.parse_args(argv))})
+
+
+def _run_pty_request(payload):
     s = connect()
-    request(s, {"cmd": "run", "args": {"name": name, "command": command, "use_init": use_init, "use_box64": use_box64, "user": user, "as_root": as_root, "shared_display": shared_display, "shared_audio": shared_audio, "shared_storage": shared_storage, "hardened": hardened, "keep_sysadmin": keep_sysadmin}})
+    request(s, payload)
+    desktop = payload["cmd"] == "desktop"
+    check = desktop and payload["args"].get("check", False)
     import termios
     import tty
 
-    # Put our terminal in raw mode and shuttle bytes to/from the daemon's PTY.
+    # Put our terminal in raw mode only when the guest is reading keystrokes.
     old = None
-    try:
-        old = termios.tcgetattr(0)
-        tty.setraw(0)
-    except (termios.error, OSError):
-        old = None
+    if not check:
+        try:
+            old = termios.tcgetattr(0)
+            tty.setraw(0)
+        except (termios.error, OSError):
+            old = None
 
     import select
 
-    exit_code = 0
+    exit_code = 1 if desktop else 0  # A lost connection is not a successful check.
     got_pid = False
+    inputs: list[socket.socket | int] = [s] if check else [s, 0]
     try:
         while True:
-            readable, _, _ = select.select([s, 0], [], [], 1.0)
+            readable, _, _ = select.select(inputs, [], [], 1.0)
             if s in readable:
                 hdr = _read_exact(s, 1)
                 if hdr is None:
@@ -636,9 +657,13 @@ def cmd_run(name, command, use_init=False, use_box64=False, user=None, as_root=F
                 except OSError:
                     kb = b""
                 if not kb:
+                    if desktop:
+                        inputs.remove(0)
+                        continue
                     break
                 s.sendall(kb)
     finally:
+        s.close()
         if old is not None:
             with _suppress():
                 termios.tcsetattr(0, termios.TCSAFLUSH, old)
@@ -750,6 +775,8 @@ def main(argv):
     cmd = args[0]
     if cmd == "ping":
         return cmd_ping()
+    if cmd == "desktop":
+        return cmd_desktop(args[1:])
     if cmd == "info":
         return cmd_info()
     if cmd == "stats":
