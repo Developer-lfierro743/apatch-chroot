@@ -7,10 +7,10 @@ nav_order: 6
 server. It doesn't start a second X server, a display manager, or a full init.
 Use a non-root guest user when possible.
 
-> This launcher is on `main`, not in the published module release. Build the
-> module with `bash build.sh` from the repository root and install that build
-> before running the steps below. Updating the guest scripts alone does not
-> update the Android-side daemon.
+> Requires APatch Chroot **v0.5.6 or newer**. Install the module ZIP from
+> [GitHub Releases](https://github.com/Developer-lfierro743/apatch-chroot/releases/latest)
+> and reboot before following the guest setup below. Updating guest scripts
+> alone does not update the Android-side daemon.
 
 ## Install or upgrade the guest launcher
 

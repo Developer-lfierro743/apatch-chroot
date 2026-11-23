@@ -4,6 +4,18 @@ Highlights per release. Full notes live in the tagged
 `RELEASE_NOTES_v*.md` files and on the
 [releases page](https://github.com/Developer-lfierro743/apatch-chroot/releases).
 
+## v0.5.6 — LXQt desktop (versionCode 21)
+
+- `apatch-chroot desktop NAME` reuses Termux:X11 and optionally PulseAudio. The
+  guest gets private D-Bus and shared memory without raw Android audio devices.
+- Startup checks refuse low-memory launches (768 MiB available by default).
+  This is not a hard RAM cap and does not change Android's LMKD.
+- Direct `run` and `exec` preserve the requested display and audio environment.
+- [Updated docs homepage](https://developer-lfierro743.github.io/apatch-chroot/docs/)
+  and [LXQt setup guide](https://developer-lfierro743.github.io/apatch-chroot/docs/desktop.html).
+- LXQt and Openbox were smoke-tested with Xvfb. The live Termux:X11 and
+  PulseAudio paths on Android are not yet verified for this release.
+
 ## v0.5.4 — Modified systemd: journal + first service (versionCode 19)
 
 - **Modified systemd suite** now lives in `systemd/` (component map in its README)

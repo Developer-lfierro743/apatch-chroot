@@ -36,7 +36,7 @@ apatch-chroot login ubuntu              # interactive shell
 apatch-chroot login ubuntu --init       # + service manager
 apatch-chroot service ubuntu start sshd # manage services from host
 apatch-chroot convert ubuntu --move     # import from chroot-distro (no copy)
-apatch-chroot desktop ubuntu --check    # LXQt preflight (main branch)
+apatch-chroot desktop ubuntu --check    # LXQt preflight (v0.5.6+)
 apatch-chroot --help                    # all commands
 ```
 
